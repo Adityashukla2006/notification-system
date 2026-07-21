@@ -1,0 +1,25 @@
+# Environment files with real credentials — never commit these.
+# .env.example is the tracked template; .env is local and secret.
+.env
+.env.*
+!.env.example
+
+# Go build output
+/api/bin/
+*.exe
+*.test
+*.out
+
+# Go coverage
+coverage.txt
+coverage.html
+
+# Node / Next.js dashboard
+/web/node_modules/
+/web/.next/
+/web/out/
+
+# Editor / OS cruft
+.DS_Store
+.idea/
+*.swp
