@@ -196,7 +196,7 @@ func TestMeEndpoint(t *testing.T) {
 	clientID := uuid.New()
 	token := mint(t, keys, clientID, nil)
 
-	handler := Router(discardLogger(), fakePinger{}, fakePinger{}, keys)
+	handler := Router(discardLogger(), fakePinger{}, fakePinger{}, keys, &fakeCreator{})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -217,7 +217,7 @@ func TestMeEndpoint(t *testing.T) {
 
 // TestMeRequiresAuth confirms /v1/me is not reachable without a key.
 func TestMeRequiresAuth(t *testing.T) {
-	handler := Router(discardLogger(), fakePinger{}, fakePinger{}, &fakeKeys{})
+	handler := Router(discardLogger(), fakePinger{}, fakePinger{}, &fakeKeys{}, &fakeCreator{})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
 	rec := httptest.NewRecorder()

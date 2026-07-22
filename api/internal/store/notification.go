@@ -171,6 +171,20 @@ func (s *Store) GetByID(ctx context.Context, id uuid.UUID) (Notification, error)
 	return n, nil
 }
 
+// UpdateStatus sets a notification's status. It returns ErrNotFound if no row
+// has the given id.
+func (s *Store) UpdateStatus(ctx context.Context, id uuid.UUID, status Status) error {
+	const q = `UPDATE notifications SET status = $2, updated_at = now() WHERE id = $1`
+	tag, err := s.pool.Exec(ctx, q, id, status)
+	if err != nil {
+		return fmt.Errorf("updating notification status: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // getByIdempotency loads the row for a (client_id, idempotency_key) pair. It is
 // used by Create's idempotency branch to return the original after a conflict.
 func (s *Store) getByIdempotency(ctx context.Context, clientID uuid.UUID, key string) (Notification, error) {
