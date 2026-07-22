@@ -53,6 +53,24 @@ type WorkerConfig struct {
 	// is also the worst-case delay before the worker notices a shutdown
 	// signal, so it trades idle Redis chatter against shutdown latency.
 	ClaimTimeout time.Duration `env:"CLAIM_TIMEOUT" envDefault:"5s"`
+
+	// PromoteEvery is how often the worker sweeps the schedule for due
+	// notifications. It sets the granularity of scheduled delivery: a
+	// notification due at T is delivered somewhere in [T, T+PromoteEvery).
+	PromoteEvery time.Duration `env:"PROMOTE_EVERY" envDefault:"1s"`
+
+	// PromoteLimit caps how many notifications a single sweep promotes, so a
+	// large backlog coming due at once drains in bounded batches instead of
+	// flooding the ready queue in one burst.
+	PromoteLimit int64 `env:"PROMOTE_LIMIT" envDefault:"100"`
+
+	// RetryBase is the delay before the first retry; each subsequent attempt
+	// doubles it before jitter.
+	RetryBase time.Duration `env:"RETRY_BASE" envDefault:"1s"`
+
+	// RetryMax caps the backoff delay. Without a cap, doubling reaches absurd
+	// values within a handful of attempts.
+	RetryMax time.Duration `env:"RETRY_MAX" envDefault:"5m"`
 }
 
 // PostgresConfig holds the discrete parameters used to reach Postgres, the

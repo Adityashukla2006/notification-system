@@ -13,6 +13,7 @@ import (
 
 	"github.com/Adityashukla2006/notification-system/api/internal/provider"
 	"github.com/Adityashukla2006/notification-system/api/internal/queue"
+	"github.com/Adityashukla2006/notification-system/api/internal/retry"
 	"github.com/Adityashukla2006/notification-system/api/internal/store"
 )
 
@@ -20,11 +21,12 @@ import (
 // so tests can assert on the transition order (delivering before delivered),
 // not merely the final state.
 type fakeStore struct {
-	byID       map[uuid.UUID]store.Notification
-	statuses   []store.Status
-	getErr     error
-	updateErr  error
-	failStatus store.Status // when set, UpdateStatus fails only for this status
+	byID             map[uuid.UUID]store.Notification
+	statuses         []store.Status
+	getErr           error
+	updateErr        error
+	recordFailureErr error
+	failStatus       store.Status // when set, UpdateStatus fails only for this status
 }
 
 func newFakeStore(rows ...store.Notification) *fakeStore {
@@ -58,6 +60,50 @@ func (f *fakeStore) UpdateStatus(_ context.Context, id uuid.UUID, status store.S
 	f.byID[id] = n
 	f.statuses = append(f.statuses, status)
 	return nil
+}
+
+// RecordFailure mirrors the real store's single-statement semantics: increment
+// attempts, then dead-letter at the ceiling or mark failed with a new due time.
+func (f *fakeStore) RecordFailure(_ context.Context, id uuid.UUID, nextAttemptAt time.Time) (store.Notification, error) {
+	if f.recordFailureErr != nil {
+		return store.Notification{}, f.recordFailureErr
+	}
+	n, ok := f.byID[id]
+	if !ok {
+		return store.Notification{}, store.ErrNotFound
+	}
+	n.Attempts++
+	if n.Attempts >= n.MaxAttempts {
+		n.Status = store.StatusDeadLettered
+	} else {
+		n.Status = store.StatusFailed
+		n.ScheduledAt = nextAttemptAt
+	}
+	f.byID[id] = n
+	f.statuses = append(f.statuses, n.Status)
+	return n, nil
+}
+
+// fakeScheduler records what was deferred and to when.
+type fakeScheduler struct {
+	scheduled map[uuid.UUID]time.Time
+	err       error
+}
+
+func newFakeScheduler() *fakeScheduler {
+	return &fakeScheduler{scheduled: map[uuid.UUID]time.Time{}}
+}
+
+func (f *fakeScheduler) Schedule(_ context.Context, id uuid.UUID, at time.Time) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.scheduled[id] = at
+	return nil
+}
+
+func (f *fakeScheduler) PromoteDue(_ context.Context, _ time.Time, _ int64) (int, error) {
+	return 0, nil
 }
 
 // fakeClaimer serves a fixed script of ids, then blocks the loop by reporting
@@ -120,14 +166,28 @@ func notification(id uuid.UUID, status store.Status, channel store.Channel) stor
 }
 
 // runOnce drives the loop over a single claimed id and returns once the script
-// is exhausted.
-func runOnce(t *testing.T, st *fakeStore, c *fakeClaimer, reg provider.Registry) {
+// is exhausted, along with the scheduler so retries can be asserted on.
+func runOnce(t *testing.T, st *fakeStore, c *fakeClaimer, reg provider.Registry) *fakeScheduler {
+	t.Helper()
+	sch := newFakeScheduler()
+	runWith(t, st, c, sch, reg)
+	return sch
+}
+
+// runWith drives the loop with an explicit scheduler.
+func runWith(t *testing.T, st *fakeStore, c *fakeClaimer, sch Scheduler, reg provider.Registry) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	c.stop = cancel
 
-	w := New(st, c, reg, discardLogger(), time.Millisecond)
+	w := New(st, c, sch, reg, discardLogger(), Config{
+		ClaimTimeout: time.Millisecond,
+		// Long enough that the promoter never fires during a test; promotion
+		// is covered separately.
+		PromoteEvery: time.Hour,
+		Policy:       retry.Policy{Base: time.Second, Max: time.Minute},
+	})
 	if err := w.Run(ctx); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -282,6 +342,148 @@ func TestProcessDoesNotAckWhenOutcomeIsNotDurable(t *testing.T) {
 	}
 }
 
+// TestFailureSchedulesRetry covers the retry path: a failure below the ceiling
+// increments attempts, marks the row failed, and defers it rather than putting
+// it straight back on the ready queue (which would spin without any backoff).
+func TestFailureSchedulesRetry(t *testing.T) {
+	row := notification(uuid.New(), store.StatusQueued, store.ChannelEmail)
+	row.Attempts = 1
+	row.MaxAttempts = 5
+	st := newFakeStore(row)
+
+	p := &fakeProvider{err: errors.New("smtp refused")}
+	c := &fakeClaimer{ids: []uuid.UUID{row.ID}}
+	sch := runOnce(t, st, c, provider.Registry{string(store.ChannelEmail): p})
+
+	got := st.byID[row.ID]
+	if got.Attempts != 2 {
+		t.Errorf("attempts = %d, want 2", got.Attempts)
+	}
+	if got.Status != store.StatusFailed {
+		t.Errorf("status = %s, want %s", got.Status, store.StatusFailed)
+	}
+	at, ok := sch.scheduled[row.ID]
+	if !ok {
+		t.Fatal("retry was not scheduled")
+	}
+	if !at.After(time.Now()) {
+		t.Errorf("retry scheduled at %v, want a time in the future", at)
+	}
+	if len(c.acked) != 1 {
+		t.Errorf("acked %v, want the claim released once the retry is durable", c.acked)
+	}
+}
+
+// TestFailureDeadLettersAtCeiling covers the other branch: the final attempt
+// dead-letters instead of scheduling yet another retry.
+func TestFailureDeadLettersAtCeiling(t *testing.T) {
+	row := notification(uuid.New(), store.StatusQueued, store.ChannelEmail)
+	row.Attempts = 4
+	row.MaxAttempts = 5
+	st := newFakeStore(row)
+
+	p := &fakeProvider{err: errors.New("smtp refused")}
+	c := &fakeClaimer{ids: []uuid.UUID{row.ID}}
+	sch := runOnce(t, st, c, provider.Registry{string(store.ChannelEmail): p})
+
+	got := st.byID[row.ID]
+	if got.Status != store.StatusDeadLettered {
+		t.Errorf("status = %s, want %s", got.Status, store.StatusDeadLettered)
+	}
+	if len(sch.scheduled) != 0 {
+		t.Errorf("scheduled %v, want no retry after the ceiling is reached", sch.scheduled)
+	}
+	if len(c.acked) != 1 {
+		t.Errorf("acked %v, want the claim released once dead-lettered", c.acked)
+	}
+}
+
+// TestRetryNotAckedWhenNotDurable extends the durability rule to the retry
+// path: if the failure cannot be recorded, or the retry cannot be scheduled,
+// the claim must stay outstanding.
+func TestRetryNotAckedWhenNotDurable(t *testing.T) {
+	tests := []struct {
+		name        string
+		recordErr   error
+		scheduleErr error
+	}{
+		{name: "record failure errors", recordErr: errors.New("connection refused")},
+		{name: "scheduling the retry errors", scheduleErr: errors.New("redis down")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			row := notification(uuid.New(), store.StatusQueued, store.ChannelEmail)
+			row.Attempts = 1
+			st := newFakeStore(row)
+			st.recordFailureErr = tt.recordErr
+
+			sch := newFakeScheduler()
+			sch.err = tt.scheduleErr
+
+			p := &fakeProvider{err: errors.New("smtp refused")}
+			c := &fakeClaimer{ids: []uuid.UUID{row.ID}}
+			runWith(t, st, c, sch, provider.Registry{string(store.ChannelEmail): p})
+
+			if len(c.acked) != 0 {
+				t.Errorf("acked %v, want no ack while the retry is not durable", c.acked)
+			}
+		})
+	}
+}
+
+// TestPromoterRunsAndStops verifies the promoter sweeps on its interval and
+// shuts down with the worker.
+func TestPromoterRunsAndStops(t *testing.T) {
+	promoted := make(chan struct{}, 1)
+	sch := &countingScheduler{onPromote: func() {
+		select {
+		case promoted <- struct{}{}:
+		default:
+		}
+	}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	c := &fakeClaimer{stop: func() {}}
+	w := New(newFakeStore(), c, sch, provider.Registry{}, discardLogger(), Config{
+		ClaimTimeout: time.Millisecond,
+		PromoteEvery: 5 * time.Millisecond,
+	})
+
+	done := make(chan error, 1)
+	go func() { done <- w.Run(ctx) }()
+
+	select {
+	case <-promoted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("promoter never swept")
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run returned %v, want nil", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return after cancellation")
+	}
+}
+
+// countingScheduler signals each promote sweep.
+type countingScheduler struct {
+	onPromote func()
+}
+
+func (s *countingScheduler) Schedule(context.Context, uuid.UUID, time.Time) error { return nil }
+
+func (s *countingScheduler) PromoteDue(context.Context, time.Time, int64) (int, error) {
+	s.onPromote()
+	return 0, nil
+}
+
 // TestRunStopsOnContextCancel confirms shutdown is observed rather than
 // requiring the process to be killed.
 func TestRunStopsOnContextCancel(t *testing.T) {
@@ -289,7 +491,10 @@ func TestRunStopsOnContextCancel(t *testing.T) {
 	cancel()
 
 	c := &fakeClaimer{stop: func() {}}
-	w := New(newFakeStore(), c, provider.Registry{}, discardLogger(), time.Millisecond)
+	w := New(newFakeStore(), c, newFakeScheduler(), provider.Registry{}, discardLogger(), Config{
+		ClaimTimeout: time.Millisecond,
+		PromoteEvery: time.Hour,
+	})
 
 	done := make(chan error, 1)
 	go func() { done <- w.Run(ctx) }()

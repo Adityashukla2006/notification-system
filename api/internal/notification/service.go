@@ -27,9 +27,16 @@ type Store interface {
 	UpdateStatus(ctx context.Context, id uuid.UUID, status store.Status) error
 }
 
-// Enqueuer hands a persisted notification off to the worker.
+// Enqueuer hands a persisted notification off to the worker for immediate
+// delivery.
 type Enqueuer interface {
 	Enqueue(ctx context.Context, id uuid.UUID) error
+}
+
+// Scheduler defers a notification until its scheduled time, at which point a
+// worker's promoter moves it onto the ready queue.
+type Scheduler interface {
+	Schedule(ctx context.Context, id uuid.UUID, at time.Time) error
 }
 
 // Outcome describes what happened to a Create call, so the HTTP layer can pick
@@ -78,14 +85,21 @@ func (e ValidationError) Error() string {
 
 // Service orchestrates accepting notifications.
 type Service struct {
-	store  Store
-	queue  Enqueuer
-	logger *slog.Logger
+	store     Store
+	queue     Enqueuer
+	scheduler Scheduler
+	logger    *slog.Logger
+	nowFunc   func() time.Time
 }
 
 // New constructs a Service.
-func New(s Store, q Enqueuer, logger *slog.Logger) *Service {
-	return &Service{store: s, queue: q, logger: logger}
+func New(s Store, q Enqueuer, sch Scheduler, logger *slog.Logger) *Service {
+	return &Service{store: s, queue: q, scheduler: sch, logger: logger, nowFunc: time.Now}
+}
+
+// now returns the current time through the service's clock, which tests replace.
+func (s *Service) now() time.Time {
+	return s.nowFunc()
 }
 
 // Create validates, persists, and enqueues a notification. It is safe to retry:
@@ -109,13 +123,13 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Result, error) {
 	}
 
 	// A freshly created row is pending; a replay may be pending or already
-	// queued. Enqueue only while still pending so retries don't double-queue.
+	// queued. Hand off only while still pending so retries don't double-queue.
 	if stored.Status == store.StatusPending {
-		if err := s.queue.Enqueue(ctx, stored.ID); err != nil {
-			// Persisted but not queued. Surface the error so the client
-			// retries; idempotency guarantees the retry re-enqueues the same
+		if err := s.handOff(ctx, stored); err != nil {
+			// Persisted but not handed off. Surface the error so the client
+			// retries; idempotency guarantees the retry re-queues the same
 			// row without creating a duplicate.
-			return Result{}, fmt.Errorf("enqueueing notification: %w", err)
+			return Result{}, err
 		}
 		if err := s.store.UpdateStatus(ctx, stored.ID, store.StatusQueued); err != nil {
 			// The id is on the queue, which is what matters for delivery; the
@@ -131,6 +145,26 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Result, error) {
 		outcome = OutcomeCreated
 	}
 	return Result{Notification: stored, Outcome: outcome}, nil
+}
+
+// handOff routes a persisted notification to the right Redis structure: the
+// ready queue for an immediate send, or the schedule for a future-dated one.
+//
+// This is where scheduled_at becomes real. Enqueueing a future-dated
+// notification directly would have a worker claim and deliver it at once,
+// silently ignoring the time the client asked for — so a notification that is
+// not yet due must never touch the ready queue.
+func (s *Service) handOff(ctx context.Context, n store.Notification) error {
+	if n.ScheduledAt.After(s.now()) {
+		if err := s.scheduler.Schedule(ctx, n.ID, n.ScheduledAt); err != nil {
+			return fmt.Errorf("scheduling notification: %w", err)
+		}
+		return nil
+	}
+	if err := s.queue.Enqueue(ctx, n.ID); err != nil {
+		return fmt.Errorf("enqueueing notification: %w", err)
+	}
+	return nil
 }
 
 // toNotification builds a store.Notification from validated input, leaving

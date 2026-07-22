@@ -17,6 +17,7 @@ import (
 	"github.com/Adityashukla2006/notification-system/api/internal/config"
 	"github.com/Adityashukla2006/notification-system/api/internal/provider"
 	"github.com/Adityashukla2006/notification-system/api/internal/queue"
+	"github.com/Adityashukla2006/notification-system/api/internal/retry"
 	"github.com/Adityashukla2006/notification-system/api/internal/store"
 	"github.com/Adityashukla2006/notification-system/api/internal/worker"
 )
@@ -66,9 +67,18 @@ func run() error {
 	w := worker.New(
 		store.New(pool),
 		queue.NewConsumer(rdb, workerID),
+		queue.NewScheduler(rdb),
 		providers(logger),
 		logger.With("worker_id", workerID),
-		cfg.Worker.ClaimTimeout,
+		worker.Config{
+			ClaimTimeout: cfg.Worker.ClaimTimeout,
+			PromoteEvery: cfg.Worker.PromoteEvery,
+			PromoteLimit: cfg.Worker.PromoteLimit,
+			Policy: retry.Policy{
+				Base: cfg.Worker.RetryBase,
+				Max:  cfg.Worker.RetryMax,
+			},
+		},
 	)
 
 	// Cancellation on SIGINT/SIGTERM is the shutdown mechanism: Run observes it

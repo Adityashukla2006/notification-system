@@ -67,7 +67,8 @@ func run() error {
 
 	st := store.New(pool)
 	q := queue.New(rdb)
-	notifications := notification.New(st, q, logger)
+	sch := queue.NewScheduler(rdb)
+	notifications := notification.New(st, q, sch, logger)
 
 	handler := apihttp.Router(logger, pool, redisPinger{rdb}, st, notifications)
 

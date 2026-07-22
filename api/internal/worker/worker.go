@@ -12,12 +12,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/Adityashukla2006/notification-system/api/internal/provider"
 	"github.com/Adityashukla2006/notification-system/api/internal/queue"
+	"github.com/Adityashukla2006/notification-system/api/internal/retry"
 	"github.com/Adityashukla2006/notification-system/api/internal/store"
 )
 
@@ -26,6 +28,14 @@ import (
 type Store interface {
 	GetByID(ctx context.Context, id uuid.UUID) (store.Notification, error)
 	UpdateStatus(ctx context.Context, id uuid.UUID, status store.Status) error
+	RecordFailure(ctx context.Context, id uuid.UUID, nextAttemptAt time.Time) (store.Notification, error)
+}
+
+// Scheduler defers a notification until it is due, and moves due notifications
+// onto the ready queue.
+type Scheduler interface {
+	Schedule(ctx context.Context, id uuid.UUID, at time.Time) error
+	PromoteDue(ctx context.Context, now time.Time, limit int64) (int, error)
 }
 
 // Claimer is the worker's end of the queue: a reliable claim that survives a
@@ -44,23 +54,61 @@ const defaultErrorBackoff = time.Second
 type Worker struct {
 	store        Store
 	claimer      Claimer
+	scheduler    Scheduler
 	providers    provider.Registry
+	policy       retry.Policy
 	logger       *slog.Logger
 	claimTimeout time.Duration
 	errorBackoff time.Duration
+	promoteEvery time.Duration
+	promoteLimit int64
+	nowFunc      func() time.Time
 }
 
-// New constructs a Worker. claimTimeout bounds how long a single claim blocks;
-// it is the upper bound on how long shutdown waits for the loop to notice.
-func New(s Store, c Claimer, providers provider.Registry, logger *slog.Logger, claimTimeout time.Duration) *Worker {
+// Config holds the Worker's tunables, grouped so New does not take an unreadable
+// row of positional arguments.
+type Config struct {
+	// ClaimTimeout bounds how long a single claim blocks; it is the upper
+	// bound on how long shutdown waits for the loop to notice.
+	ClaimTimeout time.Duration
+	// PromoteEvery is how often the promoter sweeps for due notifications. It
+	// is the granularity of scheduled delivery: a notification due at T is
+	// delivered somewhere in [T, T+PromoteEvery).
+	PromoteEvery time.Duration
+	// PromoteLimit caps how many notifications one sweep promotes, so a large
+	// backlog becoming due at once is drained in bounded batches rather than
+	// in a single unbounded burst.
+	PromoteLimit int64
+	// Policy is the retry backoff schedule.
+	Policy retry.Policy
+}
+
+// New constructs a Worker.
+func New(s Store, c Claimer, sch Scheduler, providers provider.Registry, logger *slog.Logger, cfg Config) *Worker {
+	if cfg.PromoteEvery <= 0 {
+		cfg.PromoteEvery = time.Second
+	}
+	if cfg.PromoteLimit <= 0 {
+		cfg.PromoteLimit = 100
+	}
 	return &Worker{
 		store:        s,
 		claimer:      c,
+		scheduler:    sch,
 		providers:    providers,
+		policy:       cfg.Policy,
 		logger:       logger,
-		claimTimeout: claimTimeout,
+		claimTimeout: cfg.ClaimTimeout,
 		errorBackoff: defaultErrorBackoff,
+		promoteEvery: cfg.PromoteEvery,
+		promoteLimit: cfg.PromoteLimit,
+		nowFunc:      time.Now,
 	}
+}
+
+// now returns the current time through the worker's clock, which tests replace.
+func (w *Worker) now() time.Time {
+	return w.nowFunc()
 }
 
 // Run claims and delivers notifications until ctx is cancelled. It returns nil
@@ -71,7 +119,21 @@ func New(s Store, c Claimer, providers provider.Registry, logger *slog.Logger, c
 // between deliveries or while blocked on a claim, so an in-flight delivery is
 // always allowed to finish and record its outcome before the loop exits.
 func (w *Worker) Run(ctx context.Context) error {
-	w.logger.Info("worker started", "claim_timeout", w.claimTimeout)
+	w.logger.Info("worker started",
+		"claim_timeout", w.claimTimeout,
+		"promote_every", w.promoteEvery,
+	)
+
+	// The promoter runs alongside the delivery loop rather than inside it: a
+	// blocking claim can park for the full claim timeout, and scheduled
+	// notifications must not wait on that to become due.
+	var promoter sync.WaitGroup
+	promoter.Add(1)
+	go func() {
+		defer promoter.Done()
+		w.runPromoter(ctx)
+	}()
+	defer promoter.Wait()
 
 	for {
 		if ctx.Err() != nil {
@@ -153,15 +215,17 @@ func (w *Worker) process(ctx context.Context, id uuid.UUID) {
 		Payload:   n.Payload,
 	})
 
-	status := store.StatusDelivered
 	if deliverErr != nil {
-		// Terminal for now. Retry scheduling and dead-lettering land in the
-		// next feature; until then a failed attempt stops here.
 		logger.Error("delivery failed", "channel", n.Channel, "error", deliverErr)
-		status = store.StatusFailed
+		if !w.recordFailure(ctx, logger, n) {
+			// Not durable, so do not ack: the id stays claimed for reclaim.
+			return
+		}
+		w.ack(ctx, logger, id)
+		return
 	}
 
-	if err := w.setStatus(ctx, logger, id, status); err != nil {
+	if err := w.setStatus(ctx, logger, id, store.StatusDelivered); err != nil {
 		// The outcome is not durable, so do not ack: the id stays claimed and
 		// the terminal-state check above makes a re-delivery safe to repeat.
 		return
@@ -170,6 +234,79 @@ func (w *Worker) process(ctx context.Context, id uuid.UUID) {
 	// Ack last, and only now: the outcome is durable in Postgres, so releasing
 	// the claim can no longer lose work.
 	w.ack(ctx, logger, id)
+}
+
+// recordFailure increments the attempt count and either schedules a retry or
+// lets the row be dead-lettered. It reports whether the outcome is durable
+// enough to release the claim.
+//
+// Postgres decides the branch, not this function: RecordFailure does the
+// increment and the max_attempts comparison in one statement, so concurrent
+// deliveries of the same notification cannot together exceed the ceiling.
+func (w *Worker) recordFailure(ctx context.Context, logger *slog.Logger, n store.Notification) bool {
+	// Compute the next due time from the attempt number this failure produces.
+	nextAttempt := n.Attempts + 1
+	backoff := w.policy.Backoff(nextAttempt)
+	nextAttemptAt := w.now().Add(backoff)
+
+	updated, err := w.store.RecordFailure(ctx, n.ID, nextAttemptAt)
+	if err != nil {
+		logger.Error("recording delivery failure failed", "error", err)
+		return false
+	}
+
+	if updated.Status == store.StatusDeadLettered {
+		logger.Warn("notification dead-lettered, attempts exhausted",
+			"attempts", updated.Attempts,
+			"max_attempts", updated.MaxAttempts,
+		)
+		return true
+	}
+
+	// Retries live on the schedule, not the ready queue, so the backoff is
+	// actually honored instead of the notification being re-claimed instantly.
+	if err := w.scheduler.Schedule(ctx, n.ID, nextAttemptAt); err != nil {
+		// Postgres already holds the next due time in scheduled_at, so the
+		// retry is recoverable — but nothing will promote it until a reaper
+		// exists, so this is loud.
+		logger.Error("scheduling retry failed; retry is recorded in postgres but not queued",
+			"error", err, "next_attempt_at", nextAttemptAt)
+		return false
+	}
+
+	logger.Info("retry scheduled",
+		"attempts", updated.Attempts,
+		"max_attempts", updated.MaxAttempts,
+		"backoff", backoff,
+		"next_attempt_at", nextAttemptAt,
+	)
+	return true
+}
+
+// runPromoter periodically moves due notifications onto the ready queue. It
+// exits when ctx is cancelled.
+func (w *Worker) runPromoter(ctx context.Context) {
+	ticker := time.NewTicker(w.promoteEvery)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			n, err := w.scheduler.PromoteDue(ctx, w.now(), w.promoteLimit)
+			if err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				w.logger.Error("promoting due notifications failed", "error", err)
+				continue
+			}
+			if n > 0 {
+				w.logger.Debug("promoted due notifications", "count", n)
+			}
+		}
+	}
 }
 
 // setStatus writes a status transition, logging and returning any error.

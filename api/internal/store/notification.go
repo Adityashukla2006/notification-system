@@ -185,6 +185,40 @@ func (s *Store) UpdateStatus(ctx context.Context, id uuid.UUID, status Status) e
 	return nil
 }
 
+// RecordFailure marks a delivery attempt as failed and decides what happens
+// next, in ONE statement: it increments attempts, then either schedules a retry
+// or dead-letters the row once attempts reach max_attempts. It returns the
+// updated row so the caller can see which branch was taken.
+//
+// The decision lives in SQL rather than in Go because attempts must be read and
+// written atomically. Two workers delivering the same notification (which
+// at-least-once permits) would otherwise both read attempts=4, both compute
+// "one left", and together grant one extra attempt past the ceiling. Doing the
+// increment and the comparison in a single UPDATE makes that impossible.
+//
+// nextAttemptAt is written to scheduled_at, which already means "earliest time
+// this may be delivered". Reusing it keeps the retry schedule recoverable from
+// Postgres alone if Redis is lost.
+func (s *Store) RecordFailure(ctx context.Context, id uuid.UUID, nextAttemptAt time.Time) (Notification, error) {
+	const q = `
+UPDATE notifications
+SET attempts     = attempts + 1,
+    status       = CASE WHEN attempts + 1 >= max_attempts THEN $2::text ELSE $3::text END,
+    scheduled_at = CASE WHEN attempts + 1 >= max_attempts THEN scheduled_at ELSE $4 END,
+    updated_at   = now()
+WHERE id = $1
+RETURNING` + selectColumns
+
+	n, err := scanNotification(s.pool.QueryRow(ctx, q, id, StatusDeadLettered, StatusFailed, nextAttemptAt))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Notification{}, ErrNotFound
+	}
+	if err != nil {
+		return Notification{}, fmt.Errorf("recording delivery failure: %w", err)
+	}
+	return n, nil
+}
+
 // getByIdempotency loads the row for a (client_id, idempotency_key) pair. It is
 // used by Create's idempotency branch to return the original after a conflict.
 func (s *Store) getByIdempotency(ctx context.Context, clientID uuid.UUID, key string) (Notification, error) {

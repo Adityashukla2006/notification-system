@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -78,8 +79,74 @@ func (q *fakeQueue) Enqueue(_ context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// fakeScheduler records deferred notifications and can be made to fail.
+type fakeScheduler struct {
+	scheduled map[uuid.UUID]time.Time
+	err       error
+}
+
+func newFakeScheduler() *fakeScheduler {
+	return &fakeScheduler{scheduled: map[uuid.UUID]time.Time{}}
+}
+
+func (s *fakeScheduler) Schedule(_ context.Context, id uuid.UUID, at time.Time) error {
+	if s.err != nil {
+		return s.err
+	}
+	s.scheduled[id] = at
+	return nil
+}
+
 func newService(s Store, q Enqueuer) *Service {
-	return New(s, q, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	return New(s, q, newFakeScheduler(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+}
+
+// TestServiceCreateRoutesByScheduledAt is the regression guard for scheduled
+// sends: a future-dated notification must never reach the ready queue, or a
+// worker claims it immediately and the requested time is silently ignored.
+func TestServiceCreateRoutesByScheduledAt(t *testing.T) {
+	future := time.Now().Add(time.Hour)
+	past := time.Now().Add(-time.Hour)
+
+	tests := []struct {
+		name          string
+		scheduledAt   *time.Time
+		wantEnqueued  bool
+		wantScheduled bool
+	}{
+		{name: "unscheduled sends immediately", scheduledAt: nil, wantEnqueued: true},
+		{name: "future scheduled_at defers", scheduledAt: &future, wantScheduled: true},
+		{name: "past scheduled_at sends immediately", scheduledAt: &past, wantEnqueued: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := newFakeStore()
+			q := &fakeQueue{}
+			sch := newFakeScheduler()
+			svc := New(st, q, sch, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+			in := validInput()
+			in.ScheduledAt = tt.scheduledAt
+
+			res, err := svc.Create(context.Background(), in)
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+
+			if got := len(q.enqueued) == 1; got != tt.wantEnqueued {
+				t.Errorf("enqueued = %v, want %v", got, tt.wantEnqueued)
+			}
+			if got := len(sch.scheduled) == 1; got != tt.wantScheduled {
+				t.Errorf("scheduled = %v, want %v", got, tt.wantScheduled)
+			}
+			if tt.wantScheduled {
+				if at := sch.scheduled[res.Notification.ID]; !at.Equal(future) {
+					t.Errorf("scheduled at %v, want %v", at, future)
+				}
+			}
+		})
+	}
 }
 
 func validInput() CreateInput {
