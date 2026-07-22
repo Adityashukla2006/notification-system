@@ -28,17 +28,41 @@ type Pinger interface {
 const readinessTimeout = 2 * time.Second
 
 // Router constructs the API's HTTP handler. postgres and redis are pinged by
-// the readiness probe; logger is used for request logging.
-func Router(logger *slog.Logger, postgres, redis Pinger) http.Handler {
+// the readiness probe; keys backs API-key authentication for protected routes;
+// logger is used for request logging.
+func Router(logger *slog.Logger, postgres, redis Pinger, keys APIKeyLookup) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Recoverer)
 
+	// Operational endpoints are public: probes cannot present credentials.
 	r.Get("/healthz", handleLiveness())
 	r.Get("/readyz", handleReadiness(postgres, redis))
 
+	// Everything under /v1 requires a valid API key.
+	r.Route("/v1", func(r chi.Router) {
+		r.Use(APIKeyAuth(logger, keys))
+		r.Get("/me", handleMe())
+	})
+
 	return r
+}
+
+// handleMe returns the authenticated client's id. It exists to exercise the
+// full authentication path end to end; real resource endpoints build on the
+// same client id resolved from the context.
+func handleMe() http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		clientID, ok := ClientIDFrom(req.Context())
+		if !ok {
+			// Unreachable behind APIKeyAuth, but fail closed rather than serve
+			// an empty identity.
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"client_id": clientID.String()})
+	}
 }
 
 // handleLiveness answers "is this process alive and able to serve?" It

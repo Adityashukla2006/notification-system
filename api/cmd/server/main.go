@@ -18,6 +18,7 @@ import (
 
 	"github.com/Adityashukla2006/notification-system/api/internal/config"
 	apihttp "github.com/Adityashukla2006/notification-system/api/internal/http"
+	"github.com/Adityashukla2006/notification-system/api/internal/store"
 )
 
 func main() {
@@ -62,7 +63,9 @@ func run() error {
 	})
 	defer func() { _ = rdb.Close() }()
 
-	handler := apihttp.Router(logger, pool, redisPinger{rdb})
+	notifications := store.New(pool)
+
+	handler := apihttp.Router(logger, pool, redisPinger{rdb}, notifications)
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,

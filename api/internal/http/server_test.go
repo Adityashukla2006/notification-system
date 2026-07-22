@@ -20,7 +20,7 @@ func (f fakePinger) Ping(context.Context) error { return f.err }
 
 func newTestServer() http.Handler {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return Router(logger, fakePinger{}, fakePinger{})
+	return Router(logger, fakePinger{}, fakePinger{}, &fakeKeys{})
 }
 
 func TestLiveness(t *testing.T) {
@@ -28,7 +28,7 @@ func TestLiveness(t *testing.T) {
 	// must not depend on them.
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	down := fakePinger{err: errors.New("boom")}
-	handler := Router(logger, down, down)
+	handler := Router(logger, down, down, &fakeKeys{})
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
@@ -77,7 +77,7 @@ func TestReadiness(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			handler := Router(logger, tt.postgres, tt.redis)
+			handler := Router(logger, tt.postgres, tt.redis, &fakeKeys{})
 
 			req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 			rec := httptest.NewRecorder()

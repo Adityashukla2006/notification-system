@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"sort"
 	"testing"
 	"time"
 
@@ -54,32 +55,76 @@ func setupTestDB(url string) (*pgxpool.Pool, error) {
 
 	_, thisFile, _, _ := runtime.Caller(0)
 	migDir := filepath.Join(filepath.Dir(thisFile), "..", "..", "migrations")
-	for _, name := range []string{
-		"000001_create_notifications.down.sql",
-		"000001_create_notifications.up.sql",
-	} {
-		sql, rerr := os.ReadFile(filepath.Join(migDir, name))
-		if rerr != nil {
-			return nil, fmt.Errorf("reading %s: %w", name, rerr)
+
+	// Roll every migration down (newest first) then up (oldest first), so the
+	// schema is rebuilt cleanly no matter what state the database was left in.
+	downs, err := sortedMigrations(migDir, ".down.sql")
+	if err != nil {
+		return nil, err
+	}
+	ups, err := sortedMigrations(migDir, ".up.sql")
+	if err != nil {
+		return nil, err
+	}
+	for i := len(downs) - 1; i >= 0; i-- {
+		if err := execFile(ctx, pool, downs[i]); err != nil {
+			return nil, err
 		}
-		if _, eerr := pool.Exec(ctx, string(sql)); eerr != nil {
-			return nil, fmt.Errorf("applying %s: %w", name, eerr)
+	}
+	for _, up := range ups {
+		if err := execFile(ctx, pool, up); err != nil {
+			return nil, err
 		}
 	}
 	return pool, nil
 }
 
+// sortedMigrations returns the migration files with the given suffix in
+// ascending version order (lexical order matches the zero-padded numbering).
+func sortedMigrations(dir, suffix string) ([]string, error) {
+	matches, err := filepath.Glob(filepath.Join(dir, "*"+suffix))
+	if err != nil {
+		return nil, fmt.Errorf("globbing %s migrations: %w", suffix, err)
+	}
+	sort.Strings(matches)
+	return matches, nil
+}
+
+// execFile runs one SQL file against the pool.
+func execFile(ctx context.Context, pool *pgxpool.Pool, path string) error {
+	sql, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", path, err)
+	}
+	if _, err := pool.Exec(ctx, string(sql)); err != nil {
+		return fmt.Errorf("applying %s: %w", filepath.Base(path), err)
+	}
+	return nil
+}
+
 // requireStore skips the test when no database is configured, and otherwise
-// returns a Store over a freshly truncated table.
+// returns a Store over freshly truncated tables.
 func requireStore(t *testing.T) *Store {
 	t.Helper()
 	if testPool == nil {
 		t.Skip("set TEST_DATABASE_URL to run store tests against a real Postgres")
 	}
-	if _, err := testPool.Exec(context.Background(), "TRUNCATE notifications"); err != nil {
+	// CASCADE clears notifications and api_keys, which reference clients.
+	if _, err := testPool.Exec(context.Background(), "TRUNCATE clients, notifications, api_keys CASCADE"); err != nil {
 		t.Fatalf("truncating: %v", err)
 	}
 	return New(testPool)
+}
+
+// seedClient inserts a client and returns its id, so notification tests can
+// satisfy the notifications -> clients foreign key.
+func seedClient(t *testing.T, s *Store) uuid.UUID {
+	t.Helper()
+	c, err := s.CreateClient(context.Background(), "test-client")
+	if err != nil {
+		t.Fatalf("seeding client: %v", err)
+	}
+	return c.ID
 }
 
 // equalJSON reports whether two JSON documents are semantically equal,
@@ -96,10 +141,11 @@ func equalJSON(t *testing.T, a, b []byte) bool {
 	return reflect.DeepEqual(av, bv)
 }
 
-// validNotification returns a complete, valid notification for tests to mutate.
-func validNotification() Notification {
+// validNotification returns a complete, valid notification for tests to mutate,
+// owned by the given client (which must already exist).
+func validNotification(clientID uuid.UUID) Notification {
 	return Notification{
-		ClientID:       uuid.New(),
+		ClientID:       clientID,
 		IdempotencyKey: "key-" + uuid.NewString(),
 		Channel:        ChannelEmail,
 		Recipient:      "user@example.com",
@@ -136,7 +182,7 @@ func TestCreate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := requireStore(t)
-			n := validNotification()
+			n := validNotification(seedClient(t, s))
 			tt.mutate(&n)
 
 			got, created, err := s.Create(context.Background(), n)
@@ -166,7 +212,7 @@ func TestCreateAppliesDefaults(t *testing.T) {
 	s := requireStore(t)
 
 	// Leave ID, Status, MaxAttempts, and ScheduledAt zero.
-	n := validNotification()
+	n := validNotification(seedClient(t, s))
 	before := time.Now()
 
 	got, created, err := s.Create(context.Background(), n)
@@ -197,7 +243,8 @@ func TestCreateIdempotent(t *testing.T) {
 	s := requireStore(t)
 	ctx := context.Background()
 
-	first := validNotification()
+	clientID := seedClient(t, s)
+	first := validNotification(clientID)
 	original, created, err := s.Create(ctx, first)
 	if err != nil {
 		t.Fatalf("first Create() error: %v", err)
@@ -208,8 +255,7 @@ func TestCreateIdempotent(t *testing.T) {
 
 	// Same client + key, but deliberately different contents. The store must
 	// ignore these and return the original, proving it did not overwrite.
-	second := validNotification()
-	second.ClientID = first.ClientID
+	second := validNotification(clientID)
 	second.IdempotencyKey = first.IdempotencyKey
 	second.Recipient = "someone-else@example.com"
 	second.Payload = json.RawMessage(`{"subject":"different"}`)
@@ -245,7 +291,7 @@ func TestGetByID(t *testing.T) {
 	s := requireStore(t)
 	ctx := context.Background()
 
-	created, _, err := s.Create(ctx, validNotification())
+	created, _, err := s.Create(ctx, validNotification(seedClient(t, s)))
 	if err != nil {
 		t.Fatalf("Create() error: %v", err)
 	}
