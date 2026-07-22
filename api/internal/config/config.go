@@ -34,6 +34,25 @@ type Config struct {
 	// Redis holds the connection parameters for the ephemeral coordination
 	// store (queue, retry scheduler, rate limits).
 	Redis RedisConfig `envPrefix:"REDIS_"`
+
+	// Worker holds settings used only by the worker binary. The API parses
+	// them too and ignores them; one struct for the whole service is simpler
+	// than divergent per-binary configs.
+	Worker WorkerConfig `envPrefix:"WORKER_"`
+}
+
+// WorkerConfig holds the delivery worker's settings.
+type WorkerConfig struct {
+	// ID names this worker's in-flight processing list in Redis. It must be
+	// STABLE across restarts: a worker that comes back under a new id orphans
+	// the claims it left behind. Defaulting to the hostname is right for a
+	// StatefulSet pod and wrong for a randomly-named one, so it is overridable.
+	ID string `env:"ID" envDefault:""`
+
+	// ClaimTimeout bounds how long a single blocking claim waits for work. It
+	// is also the worst-case delay before the worker notices a shutdown
+	// signal, so it trades idle Redis chatter against shutdown latency.
+	ClaimTimeout time.Duration `env:"CLAIM_TIMEOUT" envDefault:"5s"`
 }
 
 // PostgresConfig holds the discrete parameters used to reach Postgres, the
