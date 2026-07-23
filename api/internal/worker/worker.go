@@ -30,6 +30,13 @@ type Store interface {
 	UpdateStatus(ctx context.Context, id uuid.UUID, status store.Status) error
 	RecordFailure(ctx context.Context, id uuid.UUID, nextAttemptAt time.Time) (store.Notification, error)
 	RecordAttempt(ctx context.Context, a store.Attempt) (store.Attempt, error)
+	ReapStuck(ctx context.Context, stuckBefore time.Time, limit int) ([]uuid.UUID, error)
+}
+
+// Enqueuer puts a notification back on the ready queue. The reaper needs it to
+// return recovered rows to Redis.
+type Enqueuer interface {
+	Enqueue(ctx context.Context, id uuid.UUID) error
 }
 
 // Scheduler defers a notification until it is due, and moves due notifications
@@ -66,6 +73,7 @@ type Worker struct {
 	claimer        Claimer
 	scheduler      Scheduler
 	reclaimer      Reclaimer
+	enqueuer       Enqueuer
 	providers      provider.Registry
 	policy         retry.Policy
 	logger         *slog.Logger
@@ -77,6 +85,9 @@ type Worker struct {
 	heartbeatEvery time.Duration
 	livenessTTL    time.Duration
 	reclaimEvery   time.Duration
+	reapEvery      time.Duration
+	stuckAfter     time.Duration
+	reapLimit      int
 	nowFunc        func() time.Time
 }
 
@@ -106,6 +117,15 @@ type Config struct {
 	LivenessTTL time.Duration
 	// ReclaimEvery is how often this worker sweeps for abandoned claims.
 	ReclaimEvery time.Duration
+	// ReapEvery is how often this worker sweeps Postgres for stuck rows.
+	ReapEvery time.Duration
+	// StuckAfter is how long a notification may sit untouched in a
+	// non-terminal state before the reaper treats it as stranded. It must
+	// exceed the longest legitimate delivery, or the reaper requeues work that
+	// is merely slow.
+	StuckAfter time.Duration
+	// ReapLimit caps how many rows one reap sweep recovers.
+	ReapLimit int
 }
 
 // Defaults applied when a Config leaves a duration unset.
@@ -115,10 +135,22 @@ const (
 	defaultHeartbeatEvery = 5 * time.Second
 	defaultLivenessTTL    = 30 * time.Second
 	defaultReclaimEvery   = 30 * time.Second
+	defaultReapEvery      = time.Minute
+	defaultStuckAfter     = 5 * time.Minute
+	defaultReapLimit      = 100
 )
 
 // New constructs a Worker.
-func New(s Store, c Claimer, sch Scheduler, rec Reclaimer, providers provider.Registry, logger *slog.Logger, cfg Config) *Worker {
+func New(s Store, c Claimer, sch Scheduler, rec Reclaimer, enq Enqueuer, providers provider.Registry, logger *slog.Logger, cfg Config) *Worker {
+	if cfg.ReapEvery <= 0 {
+		cfg.ReapEvery = defaultReapEvery
+	}
+	if cfg.StuckAfter <= 0 {
+		cfg.StuckAfter = defaultStuckAfter
+	}
+	if cfg.ReapLimit <= 0 {
+		cfg.ReapLimit = defaultReapLimit
+	}
 	if cfg.PromoteEvery <= 0 {
 		cfg.PromoteEvery = defaultPromoteEvery
 	}
@@ -151,6 +183,7 @@ func New(s Store, c Claimer, sch Scheduler, rec Reclaimer, providers provider.Re
 		claimer:        c,
 		scheduler:      sch,
 		reclaimer:      rec,
+		enqueuer:       enq,
 		providers:      providers,
 		policy:         cfg.Policy,
 		logger:         logger,
@@ -162,6 +195,9 @@ func New(s Store, c Claimer, sch Scheduler, rec Reclaimer, providers provider.Re
 		heartbeatEvery: cfg.HeartbeatEvery,
 		livenessTTL:    cfg.LivenessTTL,
 		reclaimEvery:   cfg.ReclaimEvery,
+		reapEvery:      cfg.ReapEvery,
+		stuckAfter:     cfg.StuckAfter,
+		reapLimit:      cfg.ReapLimit,
 		nowFunc:        time.Now,
 	}
 }
@@ -208,7 +244,11 @@ func (w *Worker) Run(ctx context.Context) error {
 	// it: a blocking claim can park for the full claim timeout, and neither
 	// scheduled notifications nor liveness may wait on that.
 	var background sync.WaitGroup
-	background.Add(3)
+	background.Add(4)
+	go func() {
+		defer background.Done()
+		w.runReaper(ctx)
+	}()
 	go func() {
 		defer background.Done()
 		w.runPromoter(ctx)
@@ -481,6 +521,62 @@ func (w *Worker) runReclaimer(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// runReaper periodically recovers notifications that are stranded in Postgres.
+//
+// This is the last line of recovery, and the only one that survives losing
+// Redis entirely: it consults nothing but the source of truth.
+func (w *Worker) runReaper(ctx context.Context) {
+	ticker := time.NewTicker(w.reapEvery)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := w.reapOnce(ctx); err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				w.logger.Error("reaping stuck notifications failed", "error", err)
+			}
+		}
+	}
+}
+
+// reapOnce performs a single reap sweep, returning stranded notifications to
+// the ready queue.
+func (w *Worker) reapOnce(ctx context.Context) error {
+	stuckBefore := w.now().Add(-w.stuckAfter)
+
+	ids, err := w.store.ReapStuck(ctx, stuckBefore, w.reapLimit)
+	if err != nil {
+		return err
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+
+	// The rows are already marked queued. Enqueue is what actually makes them
+	// deliverable again; if it fails, the row simply goes stale once more and
+	// the next sweep picks it up, so this is self-healing rather than a leak.
+	enqueued := 0
+	for _, id := range ids {
+		if err := w.enqueuer.Enqueue(ctx, id); err != nil {
+			w.logger.Error("re-enqueueing reaped notification failed", "notification_id", id, "error", err)
+			continue
+		}
+		enqueued++
+	}
+
+	w.logger.Warn("recovered stranded notifications from postgres",
+		"reaped", len(ids),
+		"enqueued", enqueued,
+		"stuck_before", stuckBefore,
+	)
+	return nil
 }
 
 // setStatus writes a status transition, logging and returning any error.

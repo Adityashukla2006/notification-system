@@ -219,6 +219,67 @@ RETURNING` + selectColumns
 	return n, nil
 }
 
+// ReapStuck finds notifications that should be moving but are not, marks them
+// queued, and returns their ids so the caller can put them back on the queue.
+//
+// This is the backstop that makes "Postgres is the source of truth" real. The
+// Redis reclaimer recovers claims a dead worker held, but it cannot recover
+// what Redis itself never held or has lost:
+//
+//   - pending: persisted by the API, which then died before enqueueing.
+//   - queued: enqueued, but the queue was wiped before any worker claimed it.
+//   - delivering: a worker crashed mid-delivery and its processing list is
+//     gone too (wiped, or the worker's id never returned).
+//   - failed and due: a retry whose scheduled-set entry was lost.
+//
+// Terminal rows (delivered, dead_lettered) are never touched.
+//
+// stuckBefore is the cutoff: only rows untouched since then are swept, so a
+// notification currently being worked on is not yanked out from under a live
+// worker. It must exceed the longest legitimate delivery.
+//
+// The UPDATE is the claim. Two reapers racing cannot both take a row: the first
+// to commit changes updated_at, so the second no longer matches the predicate.
+// FOR UPDATE SKIP LOCKED means the loser moves on to other rows instead of
+// blocking behind the winner.
+func (s *Store) ReapStuck(ctx context.Context, stuckBefore time.Time, limit int) ([]uuid.UUID, error) {
+	const q = `
+UPDATE notifications
+SET status = $3, updated_at = now()
+WHERE id IN (
+	SELECT id
+	FROM notifications
+	WHERE status = ANY($1)
+	  AND scheduled_at <= now()
+	  AND updated_at < $2
+	ORDER BY scheduled_at
+	LIMIT $4
+	FOR UPDATE SKIP LOCKED
+)
+RETURNING id`
+
+	reapable := []Status{StatusPending, StatusQueued, StatusDelivering, StatusFailed}
+
+	rows, err := s.pool.Query(ctx, q, reapable, stuckBefore, StatusQueued, limit)
+	if err != nil {
+		return nil, fmt.Errorf("reaping stuck notifications: %w", err)
+	}
+	defer rows.Close()
+
+	ids := make([]uuid.UUID, 0)
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scanning reaped notification id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating reaped notifications: %w", err)
+	}
+	return ids, nil
+}
+
 // getByIdempotency loads the row for a (client_id, idempotency_key) pair. It is
 // used by Create's idempotency branch to return the original after a conflict.
 func (s *Store) getByIdempotency(ctx context.Context, clientID uuid.UUID, key string) (Notification, error) {

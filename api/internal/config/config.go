@@ -86,6 +86,21 @@ type WorkerConfig struct {
 	// ReclaimEvery is how often the worker sweeps for claims left behind by
 	// workers that are no longer alive.
 	ReclaimEvery time.Duration `env:"RECLAIM_EVERY" envDefault:"30s"`
+
+	// ReapEvery is how often the worker sweeps Postgres for notifications that
+	// are stranded in a non-terminal state. This is the only recovery path that
+	// survives losing Redis entirely, since it consults the source of truth
+	// alone.
+	ReapEvery time.Duration `env:"REAP_EVERY" envDefault:"1m"`
+
+	// StuckAfter is how long a notification may sit untouched before the reaper
+	// treats it as stranded. It must exceed the longest legitimate delivery, or
+	// the reaper requeues work that is merely slow.
+	StuckAfter time.Duration `env:"STUCK_AFTER" envDefault:"5m"`
+
+	// ReapLimit caps how many rows one reap sweep recovers, so a large backlog
+	// is drained in bounded batches.
+	ReapLimit int `env:"REAP_LIMIT" envDefault:"100"`
 }
 
 // PostgresConfig holds the discrete parameters used to reach Postgres, the

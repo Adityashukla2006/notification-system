@@ -22,6 +22,7 @@ import (
 // so tests can assert on the transition order (delivering before delivered),
 // not merely the final state.
 type fakeStore struct {
+	mu               sync.Mutex
 	byID             map[uuid.UUID]store.Notification
 	statuses         []store.Status
 	attempts         []store.Attempt
@@ -30,6 +31,11 @@ type fakeStore struct {
 	recordFailureErr error
 	recordAttemptErr error
 	failStatus       store.Status // when set, UpdateStatus fails only for this status
+	reapIDs          []uuid.UUID
+	reapErr          error
+	reapCalls        int
+	lastStuckBefore  time.Time
+	lastReapLimit    int
 }
 
 func newFakeStore(rows ...store.Notification) *fakeStore {
@@ -95,6 +101,53 @@ func (f *fakeStore) RecordAttempt(_ context.Context, a store.Attempt) (store.Att
 	a.ID = uuid.New()
 	f.attempts = append(f.attempts, a)
 	return a, nil
+}
+
+// ReapStuck returns a scripted batch of stranded ids, once, and records the
+// cutoff it was asked for.
+func (f *fakeStore) ReapStuck(_ context.Context, stuckBefore time.Time, limit int) ([]uuid.UUID, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.reapCalls++
+	f.lastStuckBefore = stuckBefore
+	f.lastReapLimit = limit
+	if f.reapErr != nil {
+		return nil, f.reapErr
+	}
+	ids := f.reapIDs
+	// Serve the batch once, mirroring the real store, where the UPDATE marks
+	// the rows so a second sweep does not return them again.
+	f.reapIDs = nil
+	return ids, nil
+}
+
+func (f *fakeStore) reapState() (calls int, stuckBefore time.Time, limit int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.reapCalls, f.lastStuckBefore, f.lastReapLimit
+}
+
+// fakeEnqueuer records ids returned to the ready queue.
+type fakeEnqueuer struct {
+	mu       sync.Mutex
+	enqueued []uuid.UUID
+	err      error
+}
+
+func (e *fakeEnqueuer) Enqueue(_ context.Context, id uuid.UUID) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.err != nil {
+		return e.err
+	}
+	e.enqueued = append(e.enqueued, id)
+	return nil
+}
+
+func (e *fakeEnqueuer) ids() []uuid.UUID {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return append([]uuid.UUID(nil), e.enqueued...)
 }
 
 // fakeScheduler records what was deferred and to when.
@@ -243,7 +296,7 @@ func runWith(t *testing.T, st *fakeStore, c *fakeClaimer, sch Scheduler, reg pro
 	defer cancel()
 	c.stop = cancel
 
-	w := New(st, c, sch, &fakeReclaimer{}, reg, discardLogger(), Config{
+	w := New(st, c, sch, &fakeReclaimer{}, &fakeEnqueuer{}, reg, discardLogger(), Config{
 		ClaimTimeout: time.Millisecond,
 		// Long enough that the background loops never fire during a test; they
 		// are covered separately.
@@ -617,7 +670,7 @@ func TestPromoterRunsAndStops(t *testing.T) {
 	defer cancel()
 
 	c := &fakeClaimer{stop: func() {}}
-	w := New(newFakeStore(), c, sch, &fakeReclaimer{}, provider.Registry{}, discardLogger(), Config{
+	w := New(newFakeStore(), c, sch, &fakeReclaimer{}, &fakeEnqueuer{}, provider.Registry{}, discardLogger(), Config{
 		ClaimTimeout:   time.Millisecond,
 		PromoteEvery:   5 * time.Millisecond,
 		HeartbeatEvery: time.Hour,
@@ -667,7 +720,7 @@ func TestStartupRecoversOwnClaims(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	c.stop = cancel
 
-	w := New(newFakeStore(), c, newFakeScheduler(), rec, provider.Registry{}, discardLogger(), Config{
+	w := New(newFakeStore(), c, newFakeScheduler(), rec, &fakeEnqueuer{}, provider.Registry{}, discardLogger(), Config{
 		ClaimTimeout:   time.Millisecond,
 		PromoteEvery:   time.Hour,
 		HeartbeatEvery: time.Hour,
@@ -709,7 +762,7 @@ func TestHeartbeatAndReclaimLoopsRun(t *testing.T) {
 	defer cancel()
 
 	c := &fakeClaimer{stop: func() {}}
-	w := New(newFakeStore(), c, newFakeScheduler(), rec, provider.Registry{}, discardLogger(), Config{
+	w := New(newFakeStore(), c, newFakeScheduler(), rec, &fakeEnqueuer{}, provider.Registry{}, discardLogger(), Config{
 		ClaimTimeout:   time.Millisecond,
 		PromoteEvery:   time.Hour,
 		HeartbeatEvery: 5 * time.Millisecond,
@@ -762,7 +815,7 @@ func TestLivenessTTLIsWidenedWhenTooTight(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			w := New(newFakeStore(), &fakeClaimer{}, newFakeScheduler(), &fakeReclaimer{},
+			w := New(newFakeStore(), &fakeClaimer{}, newFakeScheduler(), &fakeReclaimer{}, &fakeEnqueuer{},
 				provider.Registry{}, discardLogger(), Config{
 					HeartbeatEvery: tt.heartbeat,
 					LivenessTTL:    tt.ttl,
@@ -774,6 +827,116 @@ func TestLivenessTTLIsWidenedWhenTooTight(t *testing.T) {
 	}
 }
 
+// TestReapOnceRequeuesStrandedNotifications covers the Postgres backstop: rows
+// the Redis reclaimer structurally cannot recover — because Redis never held
+// them, or lost them — are found in the source of truth and put back.
+func TestReapOnceRequeuesStrandedNotifications(t *testing.T) {
+	stranded := []uuid.UUID{uuid.New(), uuid.New()}
+
+	st := newFakeStore()
+	st.reapIDs = stranded
+	enq := &fakeEnqueuer{}
+
+	w := New(st, &fakeClaimer{}, newFakeScheduler(), &fakeReclaimer{}, enq,
+		provider.Registry{}, discardLogger(), Config{StuckAfter: 5 * time.Minute, ReapLimit: 50})
+
+	if err := w.reapOnce(context.Background()); err != nil {
+		t.Fatalf("reapOnce: %v", err)
+	}
+
+	got := enq.ids()
+	if len(got) != 2 {
+		t.Fatalf("enqueued %d, want 2", len(got))
+	}
+	for i, id := range stranded {
+		if got[i] != id {
+			t.Errorf("enqueued[%d] = %s, want %s", i, got[i], id)
+		}
+	}
+
+	// The cutoff must be StuckAfter in the past: sweeping with a cutoff of now
+	// would requeue notifications a live worker is actively delivering.
+	_, stuckBefore, limit := st.reapState()
+	if delta := time.Since(stuckBefore); delta < 4*time.Minute {
+		t.Errorf("stuckBefore was %v ago, want roughly the 5m StuckAfter", delta)
+	}
+	if limit != 50 {
+		t.Errorf("reap limit = %d, want 50", limit)
+	}
+}
+
+// TestReapOnceContinuesWhenEnqueueFails checks the self-healing property: a
+// failed re-enqueue must not abort the rest of the batch. The row is already
+// marked queued, so it simply goes stale again and a later sweep retries it.
+func TestReapOnceContinuesWhenEnqueueFails(t *testing.T) {
+	st := newFakeStore()
+	st.reapIDs = []uuid.UUID{uuid.New(), uuid.New()}
+	enq := &fakeEnqueuer{err: errors.New("redis down")}
+
+	w := New(st, &fakeClaimer{}, newFakeScheduler(), &fakeReclaimer{}, enq,
+		provider.Registry{}, discardLogger(), Config{})
+
+	if err := w.reapOnce(context.Background()); err != nil {
+		t.Fatalf("reapOnce returned %v, want nil: a failed enqueue is recoverable", err)
+	}
+}
+
+// TestReapOnceSurfacesStoreErrors makes sure a broken sweep is reported rather
+// than silently treated as "nothing was stranded".
+func TestReapOnceSurfacesStoreErrors(t *testing.T) {
+	st := newFakeStore()
+	st.reapErr = errors.New("connection refused")
+
+	w := New(st, &fakeClaimer{}, newFakeScheduler(), &fakeReclaimer{}, &fakeEnqueuer{},
+		provider.Registry{}, discardLogger(), Config{})
+
+	if err := w.reapOnce(context.Background()); err == nil {
+		t.Fatal("reapOnce returned nil, want the store error surfaced")
+	}
+}
+
+// TestReaperLoopRuns verifies the reap loop ticks and stops with the worker.
+func TestReaperLoopRuns(t *testing.T) {
+	st := newFakeStore()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	c := &fakeClaimer{stop: func() {}}
+	w := New(st, c, newFakeScheduler(), &fakeReclaimer{}, &fakeEnqueuer{},
+		provider.Registry{}, discardLogger(), Config{
+			ClaimTimeout:   time.Millisecond,
+			PromoteEvery:   time.Hour,
+			HeartbeatEvery: time.Hour,
+			LivenessTTL:    3 * time.Hour,
+			ReclaimEvery:   time.Hour,
+			ReapEvery:      5 * time.Millisecond,
+		})
+
+	done := make(chan error, 1)
+	go func() { done <- w.Run(ctx) }()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if calls, _, _ := st.reapState(); calls > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if calls, _, _ := st.reapState(); calls == 0 {
+		t.Fatal("reap sweep never ran")
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run returned %v, want nil", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return after cancellation")
+	}
+}
+
 // TestRunStopsOnContextCancel confirms shutdown is observed rather than
 // requiring the process to be killed.
 func TestRunStopsOnContextCancel(t *testing.T) {
@@ -781,7 +944,7 @@ func TestRunStopsOnContextCancel(t *testing.T) {
 	cancel()
 
 	c := &fakeClaimer{stop: func() {}}
-	w := New(newFakeStore(), c, newFakeScheduler(), &fakeReclaimer{}, provider.Registry{}, discardLogger(), Config{
+	w := New(newFakeStore(), c, newFakeScheduler(), &fakeReclaimer{}, &fakeEnqueuer{}, provider.Registry{}, discardLogger(), Config{
 		ClaimTimeout:   time.Millisecond,
 		PromoteEvery:   time.Hour,
 		HeartbeatEvery: time.Hour,
