@@ -235,7 +235,27 @@ go run ./cmd/server    # :8080
 go run ./cmd/worker    # separate terminal
 ```
 
-### 6. Send one
+### 6. Run the dashboard
+
+```bash
+cd web
+cp .env.local.example .env.local   # then paste the API key from step 4
+npm install
+npm run dev                        # http://localhost:3000
+```
+
+The dashboard is **read-only**: it lists notifications with status and channel
+filters, cursor pagination, and a detail view showing the payload and every
+delivery attempt with its error and latency.
+
+> The API key is read server-side only, deliberately **without** a
+> `NEXT_PUBLIC_` prefix. That prefix would inline it into the JavaScript bundle,
+> and the key carries write access — anyone with it could send notifications as
+> you. Every API call is made by the Next server; the browser never sees it.
+> `src/lib/api.ts` imports `server-only`, so importing it from a Client
+> Component is a build error rather than a leaked credential.
+
+### 7. Send one
 
 ```bash
 curl -X POST http://localhost:8080/v1/notifications \
@@ -394,7 +414,10 @@ api/
     http/       router, handlers, auth and rate-limit middleware
     auth/       API key generation and verification
   migrations/   golang-migrate SQL, paired up/down
-web/            Next.js dashboard (read-only)
+web/
+  src/app/       routes: list, detail, error and loading states
+  src/components/ table, filters, pagination, attempt history
+  src/lib/       server-only API client, types, formatting
 scripts/        env loading, test runner
 ```
 

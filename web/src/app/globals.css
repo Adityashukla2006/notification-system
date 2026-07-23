@@ -1,0 +1,87 @@
+@import "tailwindcss";
+
+/*
+ * Semantic tokens rather than raw colours at call sites: a status badge asks
+ * for "the delivered colour", so light and dark themes are defined once here
+ * instead of every component carrying a dark: variant for the same idea.
+ */
+:root {
+  --background: #f7f8fa;
+  --surface: #ffffff;
+  --surface-muted: #f1f3f6;
+  --border: #e3e6ea;
+  --foreground: #14161a;
+  --muted: #666e7a;
+
+  --accent: #2f5fe0;
+
+  --ok-fg: #0f6b41;
+  --ok-bg: #e3f6ec;
+  --warn-fg: #8a5a00;
+  --warn-bg: #fdf0d5;
+  --danger-fg: #a3232b;
+  --danger-bg: #fdeaea;
+  --info-fg: #24509c;
+  --info-bg: #e7eefb;
+  --neutral-fg: #4a515c;
+  --neutral-bg: #eceef1;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0d0f12;
+    --surface: #14171c;
+    --surface-muted: #191d23;
+    --border: #262b33;
+    --foreground: #e7eaee;
+    --muted: #949cab;
+
+    --accent: #7aa2ff;
+
+    --ok-fg: #6fdba0;
+    --ok-bg: #10291d;
+    --warn-fg: #f0c163;
+    --warn-bg: #2c2412;
+    --danger-fg: #f6919a;
+    --danger-bg: #2e1518;
+    --info-fg: #9dbcf5;
+    --info-bg: #14203a;
+    --neutral-fg: #b3bac6;
+    --neutral-bg: #1e232a;
+  }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-border-subtle: var(--border);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+
+  --color-ok-fg: var(--ok-fg);
+  --color-ok-bg: var(--ok-bg);
+  --color-warn-fg: var(--warn-fg);
+  --color-warn-bg: var(--warn-bg);
+  --color-danger-fg: var(--danger-fg);
+  --color-danger-bg: var(--danger-bg);
+  --color-info-fg: var(--info-fg);
+  --color-info-bg: var(--info-bg);
+  --color-neutral-fg: var(--neutral-fg);
+  --color-neutral-bg: var(--neutral-bg);
+
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/* Ids and payloads are read character by character; a monospace face makes
+   transposed characters visible. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
