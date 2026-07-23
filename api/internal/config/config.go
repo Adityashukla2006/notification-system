@@ -71,6 +71,21 @@ type WorkerConfig struct {
 	// RetryMax caps the backoff delay. Without a cap, doubling reaches absurd
 	// values within a handful of attempts.
 	RetryMax time.Duration `env:"RETRY_MAX" envDefault:"5m"`
+
+	// HeartbeatEvery is how often the worker refreshes its liveness key, which
+	// is what tells other workers its in-flight claims are not abandoned.
+	HeartbeatEvery time.Duration `env:"HEARTBEAT_EVERY" envDefault:"5s"`
+
+	// LivenessTTL is how long that key survives without a refresh, and so how
+	// long after a crash the worker's claims become reclaimable. It must
+	// comfortably exceed HeartbeatEvery: set too tight, a worker that is merely
+	// slow (a long GC pause, a stalled provider call) is declared dead and its
+	// in-flight notification is delivered a second time underneath it.
+	LivenessTTL time.Duration `env:"LIVENESS_TTL" envDefault:"30s"`
+
+	// ReclaimEvery is how often the worker sweeps for claims left behind by
+	// workers that are no longer alive.
+	ReclaimEvery time.Duration `env:"RECLAIM_EVERY" envDefault:"30s"`
 }
 
 // PostgresConfig holds the discrete parameters used to reach Postgres, the

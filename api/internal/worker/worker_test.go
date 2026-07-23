@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -122,10 +123,13 @@ func (f *fakeScheduler) PromoteDue(_ context.Context, _ time.Time, _ int64) (int
 // ErrNoWork forever. Every claim after the script is exhausted cancels the
 // context, so Run terminates without the test depending on wall-clock timing.
 type fakeClaimer struct {
-	ids    []uuid.UUID
-	acked  []uuid.UUID
-	ackErr error
-	stop   context.CancelFunc
+	ids        []uuid.UUID
+	acked      []uuid.UUID
+	ackErr     error
+	drainCalls int
+	drainCount int
+	drainErr   error
+	stop       context.CancelFunc
 }
 
 func (f *fakeClaimer) Claim(_ context.Context, _ time.Duration) (uuid.UUID, error) {
@@ -144,6 +148,52 @@ func (f *fakeClaimer) Ack(_ context.Context, id uuid.UUID) error {
 	}
 	f.acked = append(f.acked, id)
 	return nil
+}
+
+func (f *fakeClaimer) Drain(_ context.Context) (int, error) {
+	f.drainCalls++
+	return f.drainCount, f.drainErr
+}
+
+// fakeReclaimer records heartbeats and reclaim sweeps.
+type fakeReclaimer struct {
+	mu            sync.Mutex
+	heartbeats    int
+	lastTTL       time.Duration
+	lastWorkerID  string
+	sweeps        int
+	heartbeatErr  error
+	reclaimErr    error
+	reclaimResult int
+	onSweep       func()
+}
+
+func (r *fakeReclaimer) Heartbeat(_ context.Context, workerID string, ttl time.Duration) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.heartbeats++
+	r.lastWorkerID = workerID
+	r.lastTTL = ttl
+	return r.heartbeatErr
+}
+
+func (r *fakeReclaimer) ReclaimAbandoned(_ context.Context) (int, int, error) {
+	r.mu.Lock()
+	sweep := r.onSweep
+	r.sweeps++
+	result := r.reclaimResult
+	err := r.reclaimErr
+	r.mu.Unlock()
+	if sweep != nil {
+		sweep()
+	}
+	return result, 0, err
+}
+
+func (r *fakeReclaimer) counts() (heartbeats, sweeps int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.heartbeats, r.sweeps
 }
 
 // fakeProvider records deliveries and can be made to fail.
@@ -193,12 +243,15 @@ func runWith(t *testing.T, st *fakeStore, c *fakeClaimer, sch Scheduler, reg pro
 	defer cancel()
 	c.stop = cancel
 
-	w := New(st, c, sch, reg, discardLogger(), Config{
+	w := New(st, c, sch, &fakeReclaimer{}, reg, discardLogger(), Config{
 		ClaimTimeout: time.Millisecond,
-		// Long enough that the promoter never fires during a test; promotion
-		// is covered separately.
-		PromoteEvery: time.Hour,
-		Policy:       retry.Policy{Base: time.Second, Max: time.Minute},
+		// Long enough that the background loops never fire during a test; they
+		// are covered separately.
+		PromoteEvery:   time.Hour,
+		HeartbeatEvery: time.Hour,
+		LivenessTTL:    3 * time.Hour,
+		ReclaimEvery:   time.Hour,
+		Policy:         retry.Policy{Base: time.Second, Max: time.Minute},
 	})
 	if err := w.Run(ctx); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -564,9 +617,12 @@ func TestPromoterRunsAndStops(t *testing.T) {
 	defer cancel()
 
 	c := &fakeClaimer{stop: func() {}}
-	w := New(newFakeStore(), c, sch, provider.Registry{}, discardLogger(), Config{
-		ClaimTimeout: time.Millisecond,
-		PromoteEvery: 5 * time.Millisecond,
+	w := New(newFakeStore(), c, sch, &fakeReclaimer{}, provider.Registry{}, discardLogger(), Config{
+		ClaimTimeout:   time.Millisecond,
+		PromoteEvery:   5 * time.Millisecond,
+		HeartbeatEvery: time.Hour,
+		LivenessTTL:    3 * time.Hour,
+		ReclaimEvery:   time.Hour,
 	})
 
 	done := make(chan error, 1)
@@ -601,6 +657,123 @@ func (s *countingScheduler) PromoteDue(context.Context, time.Time, int64) (int, 
 	return 0, nil
 }
 
+// TestStartupRecoversOwnClaims covers the restart case: a worker coming back
+// under the same id must return its own leftover claims to the ready queue
+// immediately, rather than leaving them stranded until a liveness key lapses.
+func TestStartupRecoversOwnClaims(t *testing.T) {
+	c := &fakeClaimer{stop: func() {}, drainCount: 3}
+	rec := &fakeReclaimer{}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	c.stop = cancel
+
+	w := New(newFakeStore(), c, newFakeScheduler(), rec, provider.Registry{}, discardLogger(), Config{
+		ClaimTimeout:   time.Millisecond,
+		PromoteEvery:   time.Hour,
+		HeartbeatEvery: time.Hour,
+		LivenessTTL:    3 * time.Hour,
+		ReclaimEvery:   time.Hour,
+		WorkerID:       "worker-a",
+	})
+	if err := w.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if c.drainCalls != 1 {
+		t.Errorf("Drain called %d times, want exactly 1 at startup", c.drainCalls)
+	}
+
+	// Liveness must be published before the worker starts working, or another
+	// worker's sweep could reclaim this one's list out from under it.
+	heartbeats, _ := rec.counts()
+	if heartbeats < 1 {
+		t.Error("no heartbeat published at startup, want liveness before any claim")
+	}
+	if rec.lastWorkerID != "worker-a" {
+		t.Errorf("heartbeat worker id = %q, want %q", rec.lastWorkerID, "worker-a")
+	}
+}
+
+// TestHeartbeatAndReclaimLoopsRun verifies both background loops tick and stop
+// with the worker.
+func TestHeartbeatAndReclaimLoopsRun(t *testing.T) {
+	swept := make(chan struct{}, 1)
+	rec := &fakeReclaimer{onSweep: func() {
+		select {
+		case swept <- struct{}{}:
+		default:
+		}
+	}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	c := &fakeClaimer{stop: func() {}}
+	w := New(newFakeStore(), c, newFakeScheduler(), rec, provider.Registry{}, discardLogger(), Config{
+		ClaimTimeout:   time.Millisecond,
+		PromoteEvery:   time.Hour,
+		HeartbeatEvery: 5 * time.Millisecond,
+		LivenessTTL:    time.Second,
+		ReclaimEvery:   5 * time.Millisecond,
+	})
+
+	done := make(chan error, 1)
+	go func() { done <- w.Run(ctx) }()
+
+	select {
+	case <-swept:
+	case <-time.After(2 * time.Second):
+		t.Fatal("reclaim sweep never ran")
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run returned %v, want nil", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return after cancellation")
+	}
+
+	heartbeats, sweeps := rec.counts()
+	if heartbeats < 2 {
+		t.Errorf("heartbeats = %d, want the loop to have ticked at least once beyond startup", heartbeats)
+	}
+	if sweeps < 1 {
+		t.Errorf("reclaim sweeps = %d, want at least 1", sweeps)
+	}
+}
+
+// TestLivenessTTLIsWidenedWhenTooTight guards a configuration that would make
+// every worker continuously declare itself dead: if the key expires faster than
+// it is refreshed, it is never present when another worker looks.
+func TestLivenessTTLIsWidenedWhenTooTight(t *testing.T) {
+	tests := []struct {
+		name      string
+		heartbeat time.Duration
+		ttl       time.Duration
+		wantTTL   time.Duration
+	}{
+		{name: "ttl below heartbeat is widened", heartbeat: 10 * time.Second, ttl: time.Second, wantTTL: 30 * time.Second},
+		{name: "ttl equal to heartbeat is widened", heartbeat: 10 * time.Second, ttl: 10 * time.Second, wantTTL: 30 * time.Second},
+		{name: "comfortable ttl is left alone", heartbeat: 5 * time.Second, ttl: 30 * time.Second, wantTTL: 30 * time.Second},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := New(newFakeStore(), &fakeClaimer{}, newFakeScheduler(), &fakeReclaimer{},
+				provider.Registry{}, discardLogger(), Config{
+					HeartbeatEvery: tt.heartbeat,
+					LivenessTTL:    tt.ttl,
+				})
+			if w.livenessTTL != tt.wantTTL {
+				t.Errorf("livenessTTL = %v, want %v", w.livenessTTL, tt.wantTTL)
+			}
+		})
+	}
+}
+
 // TestRunStopsOnContextCancel confirms shutdown is observed rather than
 // requiring the process to be killed.
 func TestRunStopsOnContextCancel(t *testing.T) {
@@ -608,9 +781,12 @@ func TestRunStopsOnContextCancel(t *testing.T) {
 	cancel()
 
 	c := &fakeClaimer{stop: func() {}}
-	w := New(newFakeStore(), c, newFakeScheduler(), provider.Registry{}, discardLogger(), Config{
-		ClaimTimeout: time.Millisecond,
-		PromoteEvery: time.Hour,
+	w := New(newFakeStore(), c, newFakeScheduler(), &fakeReclaimer{}, provider.Registry{}, discardLogger(), Config{
+		ClaimTimeout:   time.Millisecond,
+		PromoteEvery:   time.Hour,
+		HeartbeatEvery: time.Hour,
+		LivenessTTL:    3 * time.Hour,
+		ReclaimEvery:   time.Hour,
 	})
 
 	done := make(chan error, 1)

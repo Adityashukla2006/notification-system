@@ -40,10 +40,19 @@ type Scheduler interface {
 }
 
 // Claimer is the worker's end of the queue: a reliable claim that survives a
-// crash, plus an explicit acknowledgement that releases it.
+// crash, an explicit acknowledgement that releases it, and a way to recover
+// claims this worker left behind in a previous life.
 type Claimer interface {
 	Claim(ctx context.Context, timeout time.Duration) (uuid.UUID, error)
 	Ack(ctx context.Context, id uuid.UUID) error
+	Drain(ctx context.Context) (int, error)
+}
+
+// Reclaimer keeps this worker's liveness visible and returns other workers'
+// abandoned claims to the ready queue.
+type Reclaimer interface {
+	Heartbeat(ctx context.Context, workerID string, ttl time.Duration) error
+	ReclaimAbandoned(ctx context.Context) (notifications int, workers int, err error)
 }
 
 // defaultErrorBackoff is how long the loop pauses after an unexpected claim
@@ -53,17 +62,22 @@ const defaultErrorBackoff = time.Second
 
 // Worker runs the delivery loop.
 type Worker struct {
-	store        Store
-	claimer      Claimer
-	scheduler    Scheduler
-	providers    provider.Registry
-	policy       retry.Policy
-	logger       *slog.Logger
-	claimTimeout time.Duration
-	errorBackoff time.Duration
-	promoteEvery time.Duration
-	promoteLimit int64
-	nowFunc      func() time.Time
+	store          Store
+	claimer        Claimer
+	scheduler      Scheduler
+	reclaimer      Reclaimer
+	providers      provider.Registry
+	policy         retry.Policy
+	logger         *slog.Logger
+	workerID       string
+	claimTimeout   time.Duration
+	errorBackoff   time.Duration
+	promoteEvery   time.Duration
+	promoteLimit   int64
+	heartbeatEvery time.Duration
+	livenessTTL    time.Duration
+	reclaimEvery   time.Duration
+	nowFunc        func() time.Time
 }
 
 // Config holds the Worker's tunables, grouped so New does not take an unreadable
@@ -82,28 +96,73 @@ type Config struct {
 	PromoteLimit int64
 	// Policy is the retry backoff schedule.
 	Policy retry.Policy
+	// WorkerID identifies this worker's processing list and liveness key.
+	WorkerID string
+	// HeartbeatEvery is how often this worker refreshes its liveness key.
+	HeartbeatEvery time.Duration
+	// LivenessTTL is how long that key survives without a refresh. It must
+	// comfortably exceed HeartbeatEvery, or a merely slow worker is declared
+	// dead and its in-flight work is re-delivered underneath it.
+	LivenessTTL time.Duration
+	// ReclaimEvery is how often this worker sweeps for abandoned claims.
+	ReclaimEvery time.Duration
 }
 
+// Defaults applied when a Config leaves a duration unset.
+const (
+	defaultPromoteEvery   = time.Second
+	defaultPromoteLimit   = 100
+	defaultHeartbeatEvery = 5 * time.Second
+	defaultLivenessTTL    = 30 * time.Second
+	defaultReclaimEvery   = 30 * time.Second
+)
+
 // New constructs a Worker.
-func New(s Store, c Claimer, sch Scheduler, providers provider.Registry, logger *slog.Logger, cfg Config) *Worker {
+func New(s Store, c Claimer, sch Scheduler, rec Reclaimer, providers provider.Registry, logger *slog.Logger, cfg Config) *Worker {
 	if cfg.PromoteEvery <= 0 {
-		cfg.PromoteEvery = time.Second
+		cfg.PromoteEvery = defaultPromoteEvery
 	}
 	if cfg.PromoteLimit <= 0 {
-		cfg.PromoteLimit = 100
+		cfg.PromoteLimit = defaultPromoteLimit
 	}
+	if cfg.HeartbeatEvery <= 0 {
+		cfg.HeartbeatEvery = defaultHeartbeatEvery
+	}
+	if cfg.LivenessTTL <= 0 {
+		cfg.LivenessTTL = defaultLivenessTTL
+	}
+	if cfg.ReclaimEvery <= 0 {
+		cfg.ReclaimEvery = defaultReclaimEvery
+	}
+	// A TTL at or below the heartbeat interval guarantees the key lapses
+	// between refreshes, so every worker would continuously declare itself
+	// dead. Widen it rather than run in that state.
+	if cfg.LivenessTTL <= cfg.HeartbeatEvery {
+		logger.Warn("liveness ttl must exceed the heartbeat interval; widening it",
+			"heartbeat_every", cfg.HeartbeatEvery,
+			"configured_ttl", cfg.LivenessTTL,
+			"using_ttl", 3*cfg.HeartbeatEvery,
+		)
+		cfg.LivenessTTL = 3 * cfg.HeartbeatEvery
+	}
+
 	return &Worker{
-		store:        s,
-		claimer:      c,
-		scheduler:    sch,
-		providers:    providers,
-		policy:       cfg.Policy,
-		logger:       logger,
-		claimTimeout: cfg.ClaimTimeout,
-		errorBackoff: defaultErrorBackoff,
-		promoteEvery: cfg.PromoteEvery,
-		promoteLimit: cfg.PromoteLimit,
-		nowFunc:      time.Now,
+		store:          s,
+		claimer:        c,
+		scheduler:      sch,
+		reclaimer:      rec,
+		providers:      providers,
+		policy:         cfg.Policy,
+		logger:         logger,
+		workerID:       cfg.WorkerID,
+		claimTimeout:   cfg.ClaimTimeout,
+		errorBackoff:   defaultErrorBackoff,
+		promoteEvery:   cfg.PromoteEvery,
+		promoteLimit:   cfg.PromoteLimit,
+		heartbeatEvery: cfg.HeartbeatEvery,
+		livenessTTL:    cfg.LivenessTTL,
+		reclaimEvery:   cfg.ReclaimEvery,
+		nowFunc:        time.Now,
 	}
 }
 
@@ -121,20 +180,48 @@ func (w *Worker) now() time.Time {
 // always allowed to finish and record its outcome before the loop exits.
 func (w *Worker) Run(ctx context.Context) error {
 	w.logger.Info("worker started",
+		"worker_id", w.workerID,
 		"claim_timeout", w.claimTimeout,
 		"promote_every", w.promoteEvery,
+		"heartbeat_every", w.heartbeatEvery,
+		"liveness_ttl", w.livenessTTL,
+		"reclaim_every", w.reclaimEvery,
 	)
 
-	// The promoter runs alongside the delivery loop rather than inside it: a
-	// blocking claim can park for the full claim timeout, and scheduled
-	// notifications must not wait on that to become due.
-	var promoter sync.WaitGroup
-	promoter.Add(1)
+	// Publish liveness before anything else. Until this key exists, another
+	// worker's reclaim sweep would see this worker's processing list with no
+	// live owner and start pulling work out from under it.
+	if err := w.reclaimer.Heartbeat(ctx, w.workerID, w.livenessTTL); err != nil {
+		w.logger.Error("initial heartbeat failed", "error", err)
+	}
+
+	// Recover anything this worker left claimed when it last stopped. Whatever
+	// is on our own processing list now predates this process, so it is safe to
+	// requeue immediately rather than wait for a liveness key to lapse.
+	if moved, err := w.claimer.Drain(ctx); err != nil {
+		w.logger.Error("draining own processing list failed", "error", err)
+	} else if moved > 0 {
+		w.logger.Info("recovered claims from a previous run", "count", moved)
+	}
+
+	// The background loops run alongside the delivery loop rather than inside
+	// it: a blocking claim can park for the full claim timeout, and neither
+	// scheduled notifications nor liveness may wait on that.
+	var background sync.WaitGroup
+	background.Add(3)
 	go func() {
-		defer promoter.Done()
+		defer background.Done()
 		w.runPromoter(ctx)
 	}()
-	defer promoter.Wait()
+	go func() {
+		defer background.Done()
+		w.runHeartbeat(ctx)
+	}()
+	go func() {
+		defer background.Done()
+		w.runReclaimer(ctx)
+	}()
+	defer background.Wait()
 
 	for {
 		if ctx.Err() != nil {
@@ -336,6 +423,61 @@ func (w *Worker) runPromoter(ctx context.Context) {
 			}
 			if n > 0 {
 				w.logger.Debug("promoted due notifications", "count", n)
+			}
+		}
+	}
+}
+
+// runHeartbeat refreshes this worker's liveness key until ctx is cancelled.
+//
+// It does NOT delete the key on shutdown. Letting it expire naturally means a
+// worker restarting within the TTL keeps ownership of its own claims and
+// recovers them itself via Drain, instead of another worker grabbing them
+// mid-restart.
+func (w *Worker) runHeartbeat(ctx context.Context) {
+	ticker := time.NewTicker(w.heartbeatEvery)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := w.reclaimer.Heartbeat(ctx, w.workerID, w.livenessTTL); err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				// Serious: if this keeps failing, the key lapses and another
+				// worker will reclaim work this one is actively delivering.
+				w.logger.Error("heartbeat failed; this worker may be declared dead", "error", err)
+			}
+		}
+	}
+}
+
+// runReclaimer periodically returns dead workers' claims to the ready queue.
+func (w *Worker) runReclaimer(ctx context.Context) {
+	ticker := time.NewTicker(w.reclaimEvery)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			notifications, workers, err := w.reclaimer.ReclaimAbandoned(ctx)
+			if err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				w.logger.Error("reclaiming abandoned claims failed", "error", err)
+				continue
+			}
+			if notifications > 0 {
+				w.logger.Warn("reclaimed claims from workers that are no longer alive",
+					"notifications", notifications,
+					"workers", workers,
+				)
 			}
 		}
 	}
