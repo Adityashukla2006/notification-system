@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { ApiErrorState } from "@/components/ApiErrorState";
 import { AttemptList } from "@/components/AttemptList";
 import { StatusBadge } from "@/components/StatusBadge";
 import { ApiError, getNotification, listAttempts } from "@/lib/api";
@@ -10,7 +11,7 @@ import {
   relativeTime,
   shortId,
 } from "@/lib/format";
-import type { Notification } from "@/lib/types";
+import type { Attempt, Notification } from "@/lib/types";
 
 type Params = Promise<{ id: string }>;
 
@@ -34,12 +35,17 @@ export default async function NotificationDetailPage({
     // distinguishing "not yours" from "does not exist" would let someone probe
     // for real ids.
     if (error instanceof ApiError && error.status === 404) notFound();
-    throw error;
+    return <ApiErrorState error={error} />;
   }
 
   // Attempts are fetched after the notification, because the notification
   // lookup is what establishes the caller may see this data at all.
-  const attempts = await listAttempts(id);
+  let attempts: Attempt[];
+  try {
+    attempts = await listAttempts(id);
+  } catch (error) {
+    return <ApiErrorState error={error} />;
+  }
 
   return (
     <div className="space-y-6">

@@ -1,12 +1,19 @@
-# Local development dependency: Redis (ephemeral coordination). The API and
-# worker binaries run on the host against it. The healthcheck lets
-# `docker compose up --wait` block until Redis is actually accepting
-# connections.
+# Two ways to run this stack.
 #
-# Postgres is deliberately NOT here: this machine runs a native Postgres on
-# 5432. Publishing a container on the same port meant the native server
-# silently won every host connection, and the resulting authentication
-# failures pointed at the wrong server entirely.
+#   docker compose up -d --wait
+#     Development dependencies only: Redis and a mail catcher. The API, worker,
+#     and dashboard run on the host against a native Postgres. This is the
+#     default because it gives the fastest edit-run loop.
+#
+#   docker compose --profile app up -d --wait
+#     The whole system in containers, including its own Postgres. Nothing on the
+#     host is needed but Docker.
+#
+# Postgres is inside the `app` profile rather than always-on, and published on
+# 5433 rather than 5432. A native Postgres commonly already owns 5432; when
+# both are bound, the native one silently wins every host connection and the
+# resulting authentication failures point at entirely the wrong server.
+
 services:
   redis:
     image: redis:7-alpine
@@ -18,8 +25,8 @@ services:
       timeout: 3s
       retries: 5
 
-  # A local mail server that accepts everything and delivers nothing onward,
-  # so email delivery can be exercised end to end without sending real mail to
+  # A local mail server that accepts everything and delivers nothing onward, so
+  # email delivery can be exercised end to end without sending real mail to
   # real people. SMTP on 1025, web UI on http://localhost:8025.
   mailpit:
     image: axllent/mailpit:latest
@@ -34,3 +41,129 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+
+  # ---- containerized stack (docker compose --profile app up) ----
+
+  postgres:
+    profiles: [app]
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app_password
+      POSTGRES_DB: notifications
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d notifications"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Migrations run as their own step, and every other service waits for it to
+  # succeed. Running them from the server or worker on boot would have N
+  # starting instances race each other through the same DDL.
+  migrate:
+    profiles: [app]
+    build:
+      context: ./api
+    # entrypoint, NOT command: compose's `command` becomes ARGUMENTS to the
+    # image's ENTRYPOINT, so `command: [migrate]` would run the SERVER with
+    # "migrate" as a stray argument — which is exactly what it did until this
+    # was caught by running the stack.
+    entrypoint: ["/usr/local/bin/migrate"]
+    environment: &pg_env
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app_password
+      POSTGRES_DBNAME: notifications
+      POSTGRES_SSLMODE: disable
+      REDIS_ADDR: redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    profiles: [app]
+    build:
+      context: ./api
+    environment:
+      <<: *pg_env
+      HTTP_ADDR: ":8080"
+      LOG_LEVEL: info
+      RATE_LIMIT_REQUESTS: "100"
+      RATE_LIMIT_WINDOW: 1m
+    ports:
+      - "8080:8080"
+    depends_on:
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      # The image has no shell and no curl by design, so the readiness probe is
+      # the server checking itself through its own binary.
+      test: ["CMD", "/usr/local/bin/server", "-healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  worker:
+    profiles: [app]
+    build:
+      context: ./api
+    # entrypoint, not command — see the note on the migrate service.
+    entrypoint: ["/usr/local/bin/worker"]
+    environment:
+      <<: *pg_env
+      LOG_LEVEL: info
+      # Mailpit by default, so a containerized run delivers somewhere visible
+      # without credentials and without sending real mail to real people.
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_FROM: noreply@notifications.local
+      SMTP_STARTTLS: "false"
+      #
+      # Deliberately STACK_RESEND_API_KEY, not RESEND_API_KEY. Compose loads
+      # the project's .env automatically, so naming it RESEND_API_KEY meant a
+      # developer with a real key in .env would run this stack and silently
+      # send live email through it — which is exactly what happened the first
+      # time this was tried. Real sending must be opted into explicitly:
+      #   STACK_RESEND_API_KEY=re_... docker compose --profile app up
+      RESEND_API_KEY: ${STACK_RESEND_API_KEY:-}
+      RESEND_FROM: ${STACK_RESEND_FROM:-onboarding@resend.dev}
+    depends_on:
+      redis:
+        condition: service_healthy
+      mailpit:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  web:
+    profiles: [app]
+    build:
+      context: ./web
+    environment:
+      API_BASE_URL: http://api:8080
+      # Supplied at runtime, never baked into the image. Mint one with:
+      #   docker compose --profile app run --rm \
+      #     --entrypoint /usr/local/bin/keygen api \
+      #     -client-name local -name dashboard
+      # (--entrypoint, since a bare argument would go to the server instead.)
+      API_KEY: ${API_KEY:-}
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

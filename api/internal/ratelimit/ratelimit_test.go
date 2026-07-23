@@ -2,22 +2,21 @@ package ratelimit
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+
+	"github.com/Adityashukla2006/notification-system/api/internal/testenv"
 )
 
 // requireRedis returns a client for the test Redis, or skips when none is
 // configured via TEST_REDIS_ADDR.
 func requireRedis(t *testing.T) *redis.Client {
 	t.Helper()
-	addr := os.Getenv("TEST_REDIS_ADDR")
-	if addr == "" {
-		t.Skip("set TEST_REDIS_ADDR to run rate limit tests against a real Redis")
-	}
+	addr := testenv.RequireOrSkip(t, "TEST_REDIS_ADDR",
+		"Rate limit tests need a real Redis, e.g. localhost:6379.")
 	client := redis.NewClient(&redis.Options{Addr: addr})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()

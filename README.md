@@ -173,6 +173,40 @@ while the reverse costs only a few retries.
 
 ## Getting started
 
+### The whole stack in Docker
+
+Nothing needed on the host but Docker:
+
+```bash
+docker compose --profile app up -d --wait
+
+# Mint a key (--entrypoint, since a bare argument goes to the server instead)
+docker compose --profile app run --rm \
+  --entrypoint /usr/local/bin/keygen api \
+  -client-name local -name dashboard
+
+API_KEY=notif_… docker compose --profile app up -d web
+```
+
+| Service | Where |
+|---|---|
+| API | <http://localhost:8080> |
+| Dashboard | <http://localhost:3000> |
+| Mail catcher | <http://localhost:8025> |
+| Postgres | `localhost:5433` |
+
+Migrations run as their own container that everything else waits on, so no
+instance ever migrates on boot. Email goes to Mailpit by default — real sending
+must be opted into with `STACK_RESEND_API_KEY`, deliberately *not*
+`RESEND_API_KEY`, because Compose auto-loads `.env` and a developer with a real
+key there would otherwise send live mail just by starting the demo stack.
+
+The API image is distroless (~65 MB, no shell, non-root), so its container
+healthcheck is the server probing its own readiness endpoint via a
+`-healthcheck` flag rather than a shelled-out `curl`.
+
+### Running it locally instead
+
 ### Prerequisites
 
 - Go 1.25+
@@ -372,6 +406,21 @@ another client returns `404`, not `403` — a `403` would confirm the id exists.
 
 ## Testing
 
+Every push runs [CI](.github/workflows/ci.yml): gofmt, vet, build, the full Go
+suite **under the race detector** against real Postgres and Redis service
+containers, a migration apply-from-scratch check, the dashboard's lint,
+typecheck and build, and both Docker images.
+
+CI sets `CI=true`, which turns a missing `TEST_DATABASE_URL` or
+`TEST_REDIS_ADDR` from a *skipped* test into a *failing* one — and a separate
+step fails the build if any integration test skipped anyway. A suite that
+quietly skips its integration tests reports a green build that verified almost
+nothing, which is worse than a red one because it is believed.
+
+The race detector only runs there: it needs a cgo toolchain that Linux runners
+have and a stock Windows install often does not, and the worker runs four
+background loops alongside its delivery loop.
+
 ```powershell
 .\scripts\test.ps1                      # everything
 .\scripts\test.ps1 ./internal/store/    # one package
@@ -450,8 +499,6 @@ Nothing outside the module imports `internal/`. Both binaries share it.
   bounded by provider latency.
 - **SMS and push** — still logging stubs. Each becomes real by writing one
   `Deliver` method and registering it; the worker loop does not change.
-- **CI** — needs a pipeline that *fails* rather than skips when the `TEST_*`
-  variables are absent.
 - **Test isolation** — the suite and a running worker share one Redis; tests
   should use a dedicated database index.
 - **`attempts` semantics** — the counter tracks failures, so a first-try success

@@ -1,0 +1,9 @@
+# Keep the build context small and free of anything secret.
+
+node_modules
+.next
+.env
+.env.*
+npm-debug.log*
+.git
+README.md

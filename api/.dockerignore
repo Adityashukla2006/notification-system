@@ -1,0 +1,12 @@
+# Keep the build context small and free of anything secret.
+# Everything here would otherwise be uploaded to the daemon on every build.
+
+.env
+.env.*
+*.log
+
+# Tests do not run in the image build, and excluding them keeps the context
+# lean. They run in CI against real service containers instead.
+**/*_test.go
+
+.claude/

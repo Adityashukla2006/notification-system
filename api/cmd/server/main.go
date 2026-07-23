@@ -6,10 +6,13 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -24,11 +27,67 @@ import (
 	"github.com/Adityashukla2006/notification-system/api/internal/store"
 )
 
+// healthcheck, when set, turns this invocation into a one-shot probe of an
+// already-running server rather than starting one.
+//
+// It exists because the production image is distroless: no shell, no curl,
+// nothing a container healthcheck could otherwise call. Shipping a shell just
+// to run probes would undo the reason for choosing distroless.
+var healthcheck = flag.Bool("healthcheck", false,
+	"probe a running server's readiness endpoint and exit 0 if ready")
+
 func main() {
+	flag.Parse()
+
+	if *healthcheck {
+		if err := probe(); err != nil {
+			fmt.Fprintln(os.Stderr, "healthcheck:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	if err := run(); err != nil {
 		slog.Error("server exited with error", "error", err)
 		os.Exit(1)
 	}
+}
+
+// probe requests the readiness endpoint on this container's own port.
+//
+// It checks readiness rather than liveness deliberately: an instance that
+// cannot reach Postgres or Redis should not receive traffic, and readiness is
+// the endpoint that reports that.
+func probe() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	// HTTPAddr is a listen address like ":8080"; a client needs a host.
+	addr := cfg.HTTPAddr
+	if strings.HasPrefix(addr, ":") {
+		addr = "127.0.0.1" + addr
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+addr+"/readyz", nil)
+	if err != nil {
+		return err
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("readiness returned %d", resp.StatusCode)
+	}
+	return nil
 }
 
 // run wires the process together and blocks until shutdown. It returns an error

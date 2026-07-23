@@ -15,6 +15,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/Adityashukla2006/notification-system/api/internal/testenv"
 )
 
 // testPool is the shared pool for the package. It is nil when TEST_DATABASE_URL
@@ -107,7 +109,11 @@ func execFile(ctx context.Context, pool *pgxpool.Pool, path string) error {
 func requireStore(t *testing.T) *Store {
 	t.Helper()
 	if testPool == nil {
-		t.Skip("set TEST_DATABASE_URL to run store tests against a real Postgres")
+		// Skips locally, fails in CI: a silently skipped integration test
+		// reports a green build that verified nothing.
+		testenv.RequireOrSkip(t, "TEST_DATABASE_URL",
+			"Store tests need a real Postgres. It MUST be a disposable database — "+
+				"these tests apply every migration down then up, dropping the tables.")
 	}
 	// CASCADE clears notifications and api_keys, which reference clients.
 	if _, err := testPool.Exec(context.Background(), "TRUNCATE clients, notifications, api_keys CASCADE"); err != nil {

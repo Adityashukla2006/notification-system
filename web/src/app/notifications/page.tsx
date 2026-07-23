@@ -1,12 +1,13 @@
 import Link from "next/link";
 import { Suspense } from "react";
 
+import { ApiErrorState } from "@/components/ApiErrorState";
 import { Filters } from "@/components/Filters";
 import { Pagination, parseTrail } from "@/components/Pagination";
 import { StatusBadge } from "@/components/StatusBadge";
 import { listNotifications } from "@/lib/api";
 import { relativeTime, absoluteTime, shortId } from "@/lib/format";
-import type { Notification } from "@/lib/types";
+import type { Notification, NotificationPage } from "@/lib/types";
 
 export const metadata = {
   title: "Notifications",
@@ -30,7 +31,15 @@ export default async function NotificationsPage({
   const cursor = one(params.cursor);
   const trail = parseTrail(one(params.trail));
 
-  const page = await listNotifications({ status, channel, cursor, limit: 25 });
+  // Caught here rather than left to the error boundary: in production Next
+  // sanitises the message before it reaches the client, so only this side can
+  // tell an unreachable API from a rejected key and say which it was.
+  let page: NotificationPage;
+  try {
+    page = await listNotifications({ status, channel, cursor, limit: 25 });
+  } catch (error) {
+    return <ApiErrorState error={error} />;
+  }
 
   return (
     <div className="space-y-6">

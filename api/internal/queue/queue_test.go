@@ -3,22 +3,22 @@ package queue
 import (
 	"context"
 	"errors"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+
+	"github.com/Adityashukla2006/notification-system/api/internal/testenv"
 )
 
-// requireRedis returns a client for the test Redis, or skips when none is
-// configured via TEST_REDIS_ADDR.
+// requireRedis returns a client for the test Redis. Without TEST_REDIS_ADDR it
+// skips locally and fails in CI, where a silently skipped integration test
+// would report a green build that verified nothing.
 func requireRedis(t *testing.T) *redis.Client {
 	t.Helper()
-	addr := os.Getenv("TEST_REDIS_ADDR")
-	if addr == "" {
-		t.Skip("set TEST_REDIS_ADDR to run queue tests against a real Redis")
-	}
+	addr := testenv.RequireOrSkip(t, "TEST_REDIS_ADDR",
+		"Queue tests need a real Redis, e.g. localhost:6379.")
 	client := redis.NewClient(&redis.Options{Addr: addr})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
