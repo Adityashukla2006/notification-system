@@ -20,6 +20,7 @@ import (
 	apihttp "github.com/Adityashukla2006/notification-system/api/internal/http"
 	"github.com/Adityashukla2006/notification-system/api/internal/notification"
 	"github.com/Adityashukla2006/notification-system/api/internal/queue"
+	"github.com/Adityashukla2006/notification-system/api/internal/ratelimit"
 	"github.com/Adityashukla2006/notification-system/api/internal/store"
 )
 
@@ -70,7 +71,9 @@ func run() error {
 	sch := queue.NewScheduler(rdb)
 	notifications := notification.New(st, q, sch, logger)
 
-	handler := apihttp.Router(logger, pool, redisPinger{rdb}, st, notifications, st)
+	limiter := ratelimit.New(rdb, cfg.RateLimit.Requests, cfg.RateLimit.Window)
+
+	handler := apihttp.Router(logger, pool, redisPinger{rdb}, st, notifications, st, limiter)
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,

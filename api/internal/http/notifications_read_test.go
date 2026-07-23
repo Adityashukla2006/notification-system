@@ -116,7 +116,7 @@ func readRequest(t *testing.T, reader *fakeReader, clientID uuid.UUID, target st
 	keys := &fakeKeys{}
 	token := mint(t, keys, clientID, nil)
 
-	handler := Router(discardLogger(), fakePinger{}, fakePinger{}, keys, &fakeCreator{}, reader)
+	handler := Router(discardLogger(), fakePinger{}, fakePinger{}, keys, &fakeCreator{}, reader, allowAllLimiter{})
 
 	req := httptest.NewRequest(http.MethodGet, target, nil)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -433,7 +433,7 @@ func TestListAttempts(t *testing.T) {
 
 func TestReadEndpointsRequireAuthentication(t *testing.T) {
 	reader := newFakeReader()
-	handler := Router(discardLogger(), fakePinger{}, fakePinger{}, &fakeKeys{}, &fakeCreator{}, reader)
+	handler := Router(discardLogger(), fakePinger{}, fakePinger{}, &fakeKeys{}, &fakeCreator{}, reader, allowAllLimiter{})
 
 	for _, target := range []string{
 		"/v1/notifications",

@@ -39,6 +39,20 @@ type Config struct {
 	// them too and ignores them; one struct for the whole service is simpler
 	// than divergent per-binary configs.
 	Worker WorkerConfig `envPrefix:"WORKER_"`
+
+	// RateLimit caps how fast a single client may call the API.
+	RateLimit RateLimitConfig `envPrefix:"RATE_LIMIT_"`
+}
+
+// RateLimitConfig bounds per-client request rate.
+type RateLimitConfig struct {
+	// Requests is how many requests one client may make per Window.
+	Requests int `env:"REQUESTS" envDefault:"100"`
+
+	// Window is the period the ceiling applies over. The limiter uses a
+	// sliding window, so a client cannot double its rate by straddling a
+	// window boundary.
+	Window time.Duration `env:"WINDOW" envDefault:"1m"`
 }
 
 // WorkerConfig holds the delivery worker's settings.
