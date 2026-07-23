@@ -23,3 +23,8 @@ coverage.html
 .DS_Store
 .idea/
 *.swp
+
+# Claude Code project instructions - local tooling config, not project docs
+CLAUDE.md
+AGENTS.md
+.claude/
