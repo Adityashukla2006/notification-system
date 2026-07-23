@@ -43,10 +43,31 @@ type Config struct {
 	// RateLimit caps how fast a single client may call the API.
 	RateLimit RateLimitConfig `envPrefix:"RATE_LIMIT_"`
 
-	// SMTP is the mail server the email channel delivers through. When Host is
-	// empty the worker falls back to the logging provider, so the system runs
-	// without mail credentials.
+	// SMTP is the mail server the email channel delivers through when Resend is
+	// not configured. It is how local development sends mail into Mailpit.
 	SMTP SMTPConfig `envPrefix:"SMTP_"`
+
+	// Resend is the hosted email API. When its key is set it takes precedence
+	// over SMTP for the email channel.
+	Resend ResendConfig `envPrefix:"RESEND_"`
+}
+
+// ResendConfig configures the hosted Resend email API.
+type ResendConfig struct {
+	// APIKey authenticates with Resend. Empty disables the provider.
+	//
+	// It comes from the environment and must never be committed: a key in
+	// source is a key in every clone, every CI log, and every fork.
+	APIKey string `env:"API_KEY" envDefault:""`
+
+	// From is the sender address. It must be on a domain verified with Resend,
+	// or their onboarding@resend.dev sandbox sender.
+	From string `env:"FROM" envDefault:"onboarding@resend.dev"`
+}
+
+// Enabled reports whether Resend is configured.
+func (r ResendConfig) Enabled() bool {
+	return r.APIKey != ""
 }
 
 // SMTPConfig describes the mail server used for the email channel.
