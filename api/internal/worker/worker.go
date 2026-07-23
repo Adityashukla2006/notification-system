@@ -29,6 +29,7 @@ type Store interface {
 	GetByID(ctx context.Context, id uuid.UUID) (store.Notification, error)
 	UpdateStatus(ctx context.Context, id uuid.UUID, status store.Status) error
 	RecordFailure(ctx context.Context, id uuid.UUID, nextAttemptAt time.Time) (store.Notification, error)
+	RecordAttempt(ctx context.Context, a store.Attempt) (store.Attempt, error)
 }
 
 // Scheduler defers a notification until it is due, and moves due notifications
@@ -209,11 +210,13 @@ func (w *Worker) process(ctx context.Context, id uuid.UUID) {
 		return
 	}
 
+	startedAt := w.now()
 	deliverErr := p.Deliver(ctx, provider.Message{
 		ID:        n.ID,
 		Recipient: n.Recipient,
 		Payload:   n.Payload,
 	})
+	w.recordAttempt(ctx, logger, n, startedAt, deliverErr)
 
 	if deliverErr != nil {
 		logger.Error("delivery failed", "channel", n.Channel, "error", deliverErr)
@@ -234,6 +237,35 @@ func (w *Worker) process(ctx context.Context, id uuid.UUID) {
 	// Ack last, and only now: the outcome is durable in Postgres, so releasing
 	// the claim can no longer lose work.
 	w.ack(ctx, logger, id)
+}
+
+// recordAttempt appends this delivery attempt to the notification's history.
+//
+// It deliberately does not report failure to its caller and never blocks the
+// delivery path. The history is observational — nothing reads it to decide what
+// happens next — so losing an entry costs visibility, not correctness. Failing
+// a delivery because its audit row could not be written would trade something
+// that matters for something that does not.
+func (w *Worker) recordAttempt(ctx context.Context, logger *slog.Logger, n store.Notification, startedAt time.Time, deliverErr error) {
+	outcome := store.AttemptSucceeded
+	errText := ""
+	if deliverErr != nil {
+		outcome = store.AttemptFailed
+		errText = deliverErr.Error()
+	}
+
+	// attempt_number is 1-based: the row's counter holds attempts completed
+	// before this one.
+	if _, err := w.store.RecordAttempt(ctx, store.Attempt{
+		NotificationID: n.ID,
+		AttemptNumber:  n.Attempts + 1,
+		Outcome:        outcome,
+		Error:          errText,
+		StartedAt:      startedAt,
+		FinishedAt:     w.now(),
+	}); err != nil {
+		logger.Error("recording delivery attempt failed; history is incomplete", "error", err)
+	}
 }
 
 // recordFailure increments the attempt count and either schedules a retry or

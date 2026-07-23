@@ -23,9 +23,11 @@ import (
 type fakeStore struct {
 	byID             map[uuid.UUID]store.Notification
 	statuses         []store.Status
+	attempts         []store.Attempt
 	getErr           error
 	updateErr        error
 	recordFailureErr error
+	recordAttemptErr error
 	failStatus       store.Status // when set, UpdateStatus fails only for this status
 }
 
@@ -82,6 +84,16 @@ func (f *fakeStore) RecordFailure(_ context.Context, id uuid.UUID, nextAttemptAt
 	f.byID[id] = n
 	f.statuses = append(f.statuses, n.Status)
 	return n, nil
+}
+
+// RecordAttempt appends to the recorded history.
+func (f *fakeStore) RecordAttempt(_ context.Context, a store.Attempt) (store.Attempt, error) {
+	if f.recordAttemptErr != nil {
+		return store.Attempt{}, f.recordAttemptErr
+	}
+	a.ID = uuid.New()
+	f.attempts = append(f.attempts, a)
+	return a, nil
 }
 
 // fakeScheduler records what was deferred and to when.
@@ -429,6 +441,111 @@ func TestRetryNotAckedWhenNotDurable(t *testing.T) {
 				t.Errorf("acked %v, want no ack while the retry is not durable", c.acked)
 			}
 		})
+	}
+}
+
+// TestAttemptHistoryIsRecorded covers the per-attempt audit trail on both the
+// success and failure paths.
+func TestAttemptHistoryIsRecorded(t *testing.T) {
+	deliverErr := errors.New("smtp refused")
+
+	tests := []struct {
+		name        string
+		providerErr error
+		priorTries  int
+		wantOutcome store.AttemptOutcome
+		wantNumber  int
+		wantError   string
+	}{
+		{
+			name:        "successful delivery records a succeeded attempt",
+			priorTries:  0,
+			wantOutcome: store.AttemptSucceeded,
+			wantNumber:  1,
+		},
+		{
+			name:        "failed delivery records the provider error",
+			providerErr: deliverErr,
+			priorTries:  0,
+			wantOutcome: store.AttemptFailed,
+			wantNumber:  1,
+			wantError:   "smtp refused",
+		},
+		{
+			name:        "attempt number follows the notification's counter",
+			providerErr: deliverErr,
+			priorTries:  2,
+			wantOutcome: store.AttemptFailed,
+			wantNumber:  3,
+			wantError:   "smtp refused",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			row := notification(uuid.New(), store.StatusQueued, store.ChannelEmail)
+			row.Attempts = tt.priorTries
+			st := newFakeStore(row)
+
+			p := &fakeProvider{err: tt.providerErr}
+			c := &fakeClaimer{ids: []uuid.UUID{row.ID}}
+			runOnce(t, st, c, provider.Registry{string(store.ChannelEmail): p})
+
+			if len(st.attempts) != 1 {
+				t.Fatalf("recorded %d attempts, want 1", len(st.attempts))
+			}
+			got := st.attempts[0]
+			if got.NotificationID != row.ID {
+				t.Errorf("notification_id = %s, want %s", got.NotificationID, row.ID)
+			}
+			if got.Outcome != tt.wantOutcome {
+				t.Errorf("outcome = %s, want %s", got.Outcome, tt.wantOutcome)
+			}
+			if got.AttemptNumber != tt.wantNumber {
+				t.Errorf("attempt_number = %d, want %d", got.AttemptNumber, tt.wantNumber)
+			}
+			if got.Error != tt.wantError {
+				t.Errorf("error = %q, want %q", got.Error, tt.wantError)
+			}
+			if got.FinishedAt.Before(got.StartedAt) {
+				t.Errorf("finished_at %v is before started_at %v", got.FinishedAt, got.StartedAt)
+			}
+		})
+	}
+}
+
+// TestAttemptHistoryFailureDoesNotBlockDelivery pins the rule that the audit
+// trail is observational: if history cannot be written, the delivery still
+// completes and is still acked.
+func TestAttemptHistoryFailureDoesNotBlockDelivery(t *testing.T) {
+	row := notification(uuid.New(), store.StatusQueued, store.ChannelEmail)
+	st := newFakeStore(row)
+	st.recordAttemptErr = errors.New("connection refused")
+
+	p := &fakeProvider{}
+	c := &fakeClaimer{ids: []uuid.UUID{row.ID}}
+	runOnce(t, st, c, provider.Registry{string(store.ChannelEmail): p})
+
+	if got := st.byID[row.ID].Status; got != store.StatusDelivered {
+		t.Errorf("status = %s, want %s despite the history write failing", got, store.StatusDelivered)
+	}
+	if len(c.acked) != 1 {
+		t.Errorf("acked %v, want the claim released despite the history write failing", c.acked)
+	}
+}
+
+// TestNoAttemptRecordedWithoutADelivery confirms paths that never call a
+// provider do not fabricate history.
+func TestNoAttemptRecordedWithoutADelivery(t *testing.T) {
+	// An unregistered channel fails before any provider call.
+	row := notification(uuid.New(), store.StatusQueued, store.ChannelSMS)
+	st := newFakeStore(row)
+
+	c := &fakeClaimer{ids: []uuid.UUID{row.ID}}
+	runOnce(t, st, c, provider.Registry{string(store.ChannelEmail): &fakeProvider{}})
+
+	if len(st.attempts) != 0 {
+		t.Errorf("recorded %d attempts, want 0 when no provider was ever called", len(st.attempts))
 	}
 }
 
