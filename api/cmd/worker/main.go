@@ -70,19 +70,20 @@ func run() error {
 		queue.NewScheduler(rdb),
 		queue.NewReclaimer(rdb),
 		queue.New(rdb),
-		providers(logger),
+		providers(logger, cfg.SMTP),
 		logger.With("worker_id", workerID),
 		worker.Config{
-			WorkerID:       workerID,
-			ReapEvery:      cfg.Worker.ReapEvery,
-			StuckAfter:     cfg.Worker.StuckAfter,
-			ReapLimit:      cfg.Worker.ReapLimit,
-			ClaimTimeout:   cfg.Worker.ClaimTimeout,
-			PromoteEvery:   cfg.Worker.PromoteEvery,
-			PromoteLimit:   cfg.Worker.PromoteLimit,
-			HeartbeatEvery: cfg.Worker.HeartbeatEvery,
-			LivenessTTL:    cfg.Worker.LivenessTTL,
-			ReclaimEvery:   cfg.Worker.ReclaimEvery,
+			WorkerID:        workerID,
+			ReapEvery:       cfg.Worker.ReapEvery,
+			StuckAfter:      cfg.Worker.StuckAfter,
+			ReapLimit:       cfg.Worker.ReapLimit,
+			DeliveryTimeout: cfg.Worker.DeliveryTimeout,
+			ClaimTimeout:    cfg.Worker.ClaimTimeout,
+			PromoteEvery:    cfg.Worker.PromoteEvery,
+			PromoteLimit:    cfg.Worker.PromoteLimit,
+			HeartbeatEvery:  cfg.Worker.HeartbeatEvery,
+			LivenessTTL:     cfg.Worker.LivenessTTL,
+			ReclaimEvery:    cfg.Worker.ReclaimEvery,
 			Policy: retry.Policy{
 				Base: cfg.Worker.RetryBase,
 				Max:  cfg.Worker.RetryMax,
@@ -103,15 +104,36 @@ func run() error {
 	return nil
 }
 
-// providers builds the channel registry. Every channel is currently served by
-// the logging stub; real integrations replace these one at a time without the
-// worker loop changing.
-func providers(logger *slog.Logger) provider.Registry {
-	return provider.Registry{
+// providers builds the channel registry.
+//
+// Email uses a real SMTP server when one is configured and the logging stub
+// otherwise, so the system runs end to end without mail credentials. SMS and
+// push remain stubs; each becomes real by writing one Deliver method and
+// swapping it in here, with no change to the worker loop.
+func providers(logger *slog.Logger, smtpCfg config.SMTPConfig) provider.Registry {
+	registry := provider.Registry{
 		string(store.ChannelEmail): provider.NewLog(logger, string(store.ChannelEmail)),
 		string(store.ChannelSMS):   provider.NewLog(logger, string(store.ChannelSMS)),
 		string(store.ChannelPush):  provider.NewLog(logger, string(store.ChannelPush)),
 	}
+
+	if smtpCfg.Enabled() {
+		logger.Info("email channel using smtp",
+			"host", smtpCfg.Host, "port", smtpCfg.Port, "starttls", smtpCfg.StartTLS)
+		registry[string(store.ChannelEmail)] = provider.NewSMTP(provider.SMTPConfig{
+			Host:               smtpCfg.Host,
+			Port:               smtpCfg.Port,
+			Username:           smtpCfg.Username,
+			Password:           smtpCfg.Password,
+			From:               smtpCfg.From,
+			StartTLS:           smtpCfg.StartTLS,
+			InsecureSkipVerify: smtpCfg.InsecureSkipVerify,
+		})
+	} else {
+		logger.Warn("SMTP_HOST is unset; email is logged, not sent")
+	}
+
+	return registry
 }
 
 // resolveWorkerID falls back to the hostname when WORKER_ID is unset, since a

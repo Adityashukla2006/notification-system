@@ -69,26 +69,27 @@ const defaultErrorBackoff = time.Second
 
 // Worker runs the delivery loop.
 type Worker struct {
-	store          Store
-	claimer        Claimer
-	scheduler      Scheduler
-	reclaimer      Reclaimer
-	enqueuer       Enqueuer
-	providers      provider.Registry
-	policy         retry.Policy
-	logger         *slog.Logger
-	workerID       string
-	claimTimeout   time.Duration
-	errorBackoff   time.Duration
-	promoteEvery   time.Duration
-	promoteLimit   int64
-	heartbeatEvery time.Duration
-	livenessTTL    time.Duration
-	reclaimEvery   time.Duration
-	reapEvery      time.Duration
-	stuckAfter     time.Duration
-	reapLimit      int
-	nowFunc        func() time.Time
+	store           Store
+	claimer         Claimer
+	scheduler       Scheduler
+	reclaimer       Reclaimer
+	enqueuer        Enqueuer
+	providers       provider.Registry
+	policy          retry.Policy
+	logger          *slog.Logger
+	workerID        string
+	claimTimeout    time.Duration
+	errorBackoff    time.Duration
+	promoteEvery    time.Duration
+	promoteLimit    int64
+	heartbeatEvery  time.Duration
+	livenessTTL     time.Duration
+	reclaimEvery    time.Duration
+	reapEvery       time.Duration
+	stuckAfter      time.Duration
+	reapLimit       int
+	deliveryTimeout time.Duration
+	nowFunc         func() time.Time
 }
 
 // Config holds the Worker's tunables, grouped so New does not take an unreadable
@@ -126,6 +127,10 @@ type Config struct {
 	StuckAfter time.Duration
 	// ReapLimit caps how many rows one reap sweep recovers.
 	ReapLimit int
+	// DeliveryTimeout bounds a single provider call. It must be shorter than
+	// StuckAfter, or the reaper would declare a delivery stranded while it is
+	// still legitimately running.
+	DeliveryTimeout time.Duration
 }
 
 // Defaults applied when a Config leaves a duration unset.
@@ -138,6 +143,7 @@ const (
 	defaultReapEvery      = time.Minute
 	defaultStuckAfter     = 5 * time.Minute
 	defaultReapLimit      = 100
+	defaultDeliveryTime   = 30 * time.Second
 )
 
 // New constructs a Worker.
@@ -150,6 +156,20 @@ func New(s Store, c Claimer, sch Scheduler, rec Reclaimer, enq Enqueuer, provide
 	}
 	if cfg.ReapLimit <= 0 {
 		cfg.ReapLimit = defaultReapLimit
+	}
+	if cfg.DeliveryTimeout <= 0 {
+		cfg.DeliveryTimeout = defaultDeliveryTime
+	}
+	// A delivery allowed to outlive the stuck threshold would be reaped and
+	// re-queued while it is still running, producing a duplicate send that the
+	// timeout exists to prevent.
+	if cfg.DeliveryTimeout >= cfg.StuckAfter {
+		logger.Warn("delivery timeout must be shorter than the stuck threshold; shortening it",
+			"delivery_timeout", cfg.DeliveryTimeout,
+			"stuck_after", cfg.StuckAfter,
+			"using_timeout", cfg.StuckAfter/2,
+		)
+		cfg.DeliveryTimeout = cfg.StuckAfter / 2
 	}
 	if cfg.PromoteEvery <= 0 {
 		cfg.PromoteEvery = defaultPromoteEvery
@@ -179,26 +199,27 @@ func New(s Store, c Claimer, sch Scheduler, rec Reclaimer, enq Enqueuer, provide
 	}
 
 	return &Worker{
-		store:          s,
-		claimer:        c,
-		scheduler:      sch,
-		reclaimer:      rec,
-		enqueuer:       enq,
-		providers:      providers,
-		policy:         cfg.Policy,
-		logger:         logger,
-		workerID:       cfg.WorkerID,
-		claimTimeout:   cfg.ClaimTimeout,
-		errorBackoff:   defaultErrorBackoff,
-		promoteEvery:   cfg.PromoteEvery,
-		promoteLimit:   cfg.PromoteLimit,
-		heartbeatEvery: cfg.HeartbeatEvery,
-		livenessTTL:    cfg.LivenessTTL,
-		reclaimEvery:   cfg.ReclaimEvery,
-		reapEvery:      cfg.ReapEvery,
-		stuckAfter:     cfg.StuckAfter,
-		reapLimit:      cfg.ReapLimit,
-		nowFunc:        time.Now,
+		store:           s,
+		claimer:         c,
+		scheduler:       sch,
+		reclaimer:       rec,
+		enqueuer:        enq,
+		providers:       providers,
+		policy:          cfg.Policy,
+		logger:          logger,
+		workerID:        cfg.WorkerID,
+		claimTimeout:    cfg.ClaimTimeout,
+		errorBackoff:    defaultErrorBackoff,
+		promoteEvery:    cfg.PromoteEvery,
+		promoteLimit:    cfg.PromoteLimit,
+		heartbeatEvery:  cfg.HeartbeatEvery,
+		livenessTTL:     cfg.LivenessTTL,
+		reclaimEvery:    cfg.ReclaimEvery,
+		reapEvery:       cfg.ReapEvery,
+		stuckAfter:      cfg.StuckAfter,
+		reapLimit:       cfg.ReapLimit,
+		deliveryTimeout: cfg.DeliveryTimeout,
+		nowFunc:         time.Now,
 	}
 }
 
@@ -337,13 +358,33 @@ func (w *Worker) process(ctx context.Context, id uuid.UUID) {
 		return
 	}
 
+	// Bound the provider call. Without this a provider that accepts a
+	// connection and then stops responding holds this worker forever: the
+	// delivery loop is sequential, so one hung call stops the worker entirely,
+	// and the notification is never acked or retried.
+	deliverCtx, cancelDelivery := context.WithTimeout(ctx, w.deliveryTimeout)
 	startedAt := w.now()
-	deliverErr := p.Deliver(ctx, provider.Message{
+	deliverErr := p.Deliver(deliverCtx, provider.Message{
 		ID:        n.ID,
 		Recipient: n.Recipient,
 		Payload:   n.Payload,
 	})
+	cancelDelivery()
+
 	w.recordAttempt(ctx, logger, n, startedAt, deliverErr)
+
+	// A permanent failure will fail identically on every future attempt, so
+	// spending the remaining retries on it only delays real work and, for
+	// email, keeps pushing known-bad addresses at the provider.
+	if deliverErr != nil && provider.IsPermanent(deliverErr) {
+		logger.Error("delivery failed permanently, dead-lettering without retry",
+			"channel", n.Channel, "error", deliverErr)
+		if err := w.setStatus(ctx, logger, id, store.StatusDeadLettered); err != nil {
+			return
+		}
+		w.ack(ctx, logger, id)
+		return
+	}
 
 	if deliverErr != nil {
 		logger.Error("delivery failed", "channel", n.Channel, "error", deliverErr)

@@ -42,6 +42,39 @@ type Config struct {
 
 	// RateLimit caps how fast a single client may call the API.
 	RateLimit RateLimitConfig `envPrefix:"RATE_LIMIT_"`
+
+	// SMTP is the mail server the email channel delivers through. When Host is
+	// empty the worker falls back to the logging provider, so the system runs
+	// without mail credentials.
+	SMTP SMTPConfig `envPrefix:"SMTP_"`
+}
+
+// SMTPConfig describes the mail server used for the email channel.
+type SMTPConfig struct {
+	// Host is the mail server. Empty disables real email delivery.
+	Host string `env:"HOST" envDefault:""`
+	Port int    `env:"PORT" envDefault:"587"`
+
+	// Username and Password are optional: a local test server usually needs
+	// neither.
+	Username string `env:"USERNAME" envDefault:""`
+	Password string `env:"PASSWORD" envDefault:""`
+
+	// From is the envelope sender and the From header.
+	From string `env:"FROM" envDefault:""`
+
+	// StartTLS should be on for any real server, and off for a local test
+	// server that does not offer TLS.
+	StartTLS bool `env:"STARTTLS" envDefault:"true"`
+
+	// InsecureSkipVerify disables certificate verification. Development only —
+	// it defeats the point of TLS.
+	InsecureSkipVerify bool `env:"INSECURE_SKIP_VERIFY" envDefault:"false"`
+}
+
+// Enabled reports whether real email delivery is configured.
+func (s SMTPConfig) Enabled() bool {
+	return s.Host != ""
 }
 
 // RateLimitConfig bounds per-client request rate.
@@ -115,6 +148,12 @@ type WorkerConfig struct {
 	// ReapLimit caps how many rows one reap sweep recovers, so a large backlog
 	// is drained in bounded batches.
 	ReapLimit int `env:"REAP_LIMIT" envDefault:"100"`
+
+	// DeliveryTimeout bounds a single provider call. Without it, a provider
+	// that accepts a connection and then stops responding holds the worker
+	// forever. It must be shorter than StuckAfter, or the reaper would requeue
+	// a delivery that is still legitimately running.
+	DeliveryTimeout time.Duration `env:"DELIVERY_TIMEOUT" envDefault:"30s"`
 }
 
 // PostgresConfig holds the discrete parameters used to reach Postgres, the

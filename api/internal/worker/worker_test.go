@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -934,6 +935,160 @@ func TestReaperLoopRuns(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Run did not return after cancellation")
+	}
+}
+
+// blockingProvider blocks until its context is done, standing in for a provider
+// that accepts the call and then stops responding.
+type blockingProvider struct {
+	sawDeadline bool
+	hadDeadline bool
+}
+
+func (p *blockingProvider) Deliver(ctx context.Context, _ provider.Message) error {
+	_, p.hadDeadline = ctx.Deadline()
+	<-ctx.Done()
+	p.sawDeadline = true
+	return ctx.Err()
+}
+
+// TestDeliveryTimeoutUnblocksTheWorker is the guarantee that keeps one bad
+// provider from stopping a worker entirely: the delivery loop is sequential, so
+// a call that never returns would halt everything behind it forever.
+func TestDeliveryTimeoutUnblocksTheWorker(t *testing.T) {
+	row := notification(uuid.New(), store.StatusQueued, store.ChannelEmail)
+	st := newFakeStore(row)
+	p := &blockingProvider{}
+	c := &fakeClaimer{ids: []uuid.UUID{row.ID}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	c.stop = cancel
+
+	w := New(st, c, newFakeScheduler(), &fakeReclaimer{}, &fakeEnqueuer{},
+		provider.Registry{string(store.ChannelEmail): p}, discardLogger(), Config{
+			ClaimTimeout:    time.Millisecond,
+			PromoteEvery:    time.Hour,
+			HeartbeatEvery:  time.Hour,
+			LivenessTTL:     3 * time.Hour,
+			ReclaimEvery:    time.Hour,
+			ReapEvery:       time.Hour,
+			StuckAfter:      time.Hour,
+			DeliveryTimeout: 50 * time.Millisecond,
+		})
+
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() { done <- w.Run(ctx) }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run returned %v, want nil", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("worker never returned; the delivery timeout did not fire")
+	}
+
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Errorf("worker took %v, want the 50ms delivery timeout to bound it", elapsed)
+	}
+	if !p.hadDeadline {
+		t.Error("provider received a context with no deadline; a hung provider would block forever")
+	}
+	if !p.sawDeadline {
+		t.Error("provider was never released by its context")
+	}
+
+	// A timeout is transient, so it must be recorded as a failed attempt and
+	// retried, not dead-lettered.
+	if len(st.attempts) != 1 {
+		t.Fatalf("recorded %d attempts, want 1", len(st.attempts))
+	}
+	if st.attempts[0].Outcome != store.AttemptFailed {
+		t.Errorf("attempt outcome = %s, want %s", st.attempts[0].Outcome, store.AttemptFailed)
+	}
+	if got := st.byID[row.ID].Status; got != store.StatusFailed {
+		t.Errorf("status = %s, want %s (a timeout is transient)", got, store.StatusFailed)
+	}
+}
+
+// TestDeliveryTimeoutIsShortenedBelowStuckAfter guards a configuration that
+// would let the reaper requeue a delivery still legitimately running.
+func TestDeliveryTimeoutIsShortenedBelowStuckAfter(t *testing.T) {
+	tests := []struct {
+		name       string
+		timeout    time.Duration
+		stuckAfter time.Duration
+		want       time.Duration
+	}{
+		{name: "timeout above stuck threshold is shortened", timeout: 10 * time.Minute, stuckAfter: 5 * time.Minute, want: 150 * time.Second},
+		{name: "timeout equal to stuck threshold is shortened", timeout: 5 * time.Minute, stuckAfter: 5 * time.Minute, want: 150 * time.Second},
+		{name: "comfortable timeout is left alone", timeout: 30 * time.Second, stuckAfter: 5 * time.Minute, want: 30 * time.Second},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := New(newFakeStore(), &fakeClaimer{}, newFakeScheduler(), &fakeReclaimer{}, &fakeEnqueuer{},
+				provider.Registry{}, discardLogger(), Config{
+					DeliveryTimeout: tt.timeout,
+					StuckAfter:      tt.stuckAfter,
+				})
+			if w.deliveryTimeout != tt.want {
+				t.Errorf("deliveryTimeout = %v, want %v", w.deliveryTimeout, tt.want)
+			}
+		})
+	}
+}
+
+// TestPermanentFailureDeadLettersImmediately checks retries are not spent on a
+// request that cannot ever succeed.
+func TestPermanentFailureDeadLettersImmediately(t *testing.T) {
+	row := notification(uuid.New(), store.StatusQueued, store.ChannelEmail)
+	row.Attempts = 0
+	row.MaxAttempts = 5
+	st := newFakeStore(row)
+
+	p := &fakeProvider{err: provider.Permanent(errors.New("550 no such mailbox"))}
+	c := &fakeClaimer{ids: []uuid.UUID{row.ID}}
+	sch := runOnce(t, st, c, provider.Registry{string(store.ChannelEmail): p})
+
+	if got := st.byID[row.ID].Status; got != store.StatusDeadLettered {
+		t.Errorf("status = %s, want %s without spending retries", got, store.StatusDeadLettered)
+	}
+	if len(sch.scheduled) != 0 {
+		t.Errorf("scheduled %v, want no retry for a permanent failure", sch.scheduled)
+	}
+	if len(c.acked) != 1 {
+		t.Errorf("acked %v, want the claim released", c.acked)
+	}
+
+	// The failure still belongs in the history, with its reason.
+	if len(st.attempts) != 1 {
+		t.Fatalf("recorded %d attempts, want 1", len(st.attempts))
+	}
+	if !strings.Contains(st.attempts[0].Error, "550 no such mailbox") {
+		t.Errorf("attempt error = %q, want the provider's reason preserved", st.attempts[0].Error)
+	}
+}
+
+// TestTransientFailureStillRetries is the counterpart: only permanent failures
+// skip the retry schedule.
+func TestTransientFailureStillRetries(t *testing.T) {
+	row := notification(uuid.New(), store.StatusQueued, store.ChannelEmail)
+	row.Attempts = 0
+	row.MaxAttempts = 5
+	st := newFakeStore(row)
+
+	p := &fakeProvider{err: errors.New("connection refused")}
+	c := &fakeClaimer{ids: []uuid.UUID{row.ID}}
+	sch := runOnce(t, st, c, provider.Registry{string(store.ChannelEmail): p})
+
+	if got := st.byID[row.ID].Status; got != store.StatusFailed {
+		t.Errorf("status = %s, want %s", got, store.StatusFailed)
+	}
+	if len(sch.scheduled) != 1 {
+		t.Errorf("scheduled %v, want a retry for a transient failure", sch.scheduled)
 	}
 }
 
