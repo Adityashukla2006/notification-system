@@ -31,6 +31,7 @@ type fakeStore struct {
 	updateErr        error
 	recordFailureErr error
 	recordAttemptErr error
+	deadLetterErr    error
 	failStatus       store.Status // when set, UpdateStatus fails only for this status
 	reapIDs          []uuid.UUID
 	reapErr          error
@@ -102,6 +103,23 @@ func (f *fakeStore) RecordAttempt(_ context.Context, a store.Attempt) (store.Att
 	a.ID = uuid.New()
 	f.attempts = append(f.attempts, a)
 	return a, nil
+}
+
+// DeadLetter mirrors the real store: increment attempts and mark the row
+// dead_lettered, so the counter matches the recorded history.
+func (f *fakeStore) DeadLetter(_ context.Context, id uuid.UUID) (store.Notification, error) {
+	if f.deadLetterErr != nil {
+		return store.Notification{}, f.deadLetterErr
+	}
+	n, ok := f.byID[id]
+	if !ok {
+		return store.Notification{}, store.ErrNotFound
+	}
+	n.Attempts++
+	n.Status = store.StatusDeadLettered
+	f.byID[id] = n
+	f.statuses = append(f.statuses, n.Status)
+	return n, nil
 }
 
 // ReapStuck returns a scripted batch of stranded ids, once, and records the
@@ -780,6 +798,17 @@ func TestHeartbeatAndReclaimLoopsRun(t *testing.T) {
 		t.Fatal("reclaim sweep never ran")
 	}
 
+	// Wait for the heartbeat loop to tick beyond the one published at startup.
+	// The two loops share an interval, so the first sweep proves nothing about
+	// the heartbeat; asserting straight after it is a race.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if beats, _ := rec.counts(); beats >= 2 {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+
 	cancel()
 	select {
 	case err := <-done:
@@ -1061,6 +1090,13 @@ func TestPermanentFailureDeadLettersImmediately(t *testing.T) {
 	}
 	if len(c.acked) != 1 {
 		t.Errorf("acked %v, want the claim released", c.acked)
+	}
+
+	// The counter must agree with the history. Integration testing caught this
+	// disagreeing: the row reported zero attempts while delivery_attempts held
+	// one, because the permanent path skipped the only code that incremented it.
+	if got := st.byID[row.ID].Attempts; got != 1 {
+		t.Errorf("attempts = %d, want 1 to match the one recorded attempt", got)
 	}
 
 	// The failure still belongs in the history, with its reason.

@@ -228,6 +228,11 @@ func TestListNotificationsRejectsBadParameters(t *testing.T) {
 		{name: "negative limit", query: "?limit=-5"},
 		{name: "limit above maximum", query: "?limit=1000"},
 		{name: "malformed cursor", query: "?cursor=!!!notbase64!!!"},
+		// Invalid percent-encoding: url.Values silently DROPS parameters it
+		// cannot parse, so without an explicit check the caller would be handed
+		// page one again and a paginating loop would never advance.
+		{name: "malformed percent-encoding in query", query: "?cursor=%%%"},
+		{name: "malformed percent-encoding in another param", query: "?status=%zz"},
 	}
 
 	for _, tt := range tests {

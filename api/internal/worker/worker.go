@@ -31,6 +31,7 @@ type Store interface {
 	RecordFailure(ctx context.Context, id uuid.UUID, nextAttemptAt time.Time) (store.Notification, error)
 	RecordAttempt(ctx context.Context, a store.Attempt) (store.Attempt, error)
 	ReapStuck(ctx context.Context, stuckBefore time.Time, limit int) ([]uuid.UUID, error)
+	DeadLetter(ctx context.Context, id uuid.UUID) (store.Notification, error)
 }
 
 // Enqueuer puts a notification back on the ready queue. The reaper needs it to
@@ -236,8 +237,10 @@ func (w *Worker) now() time.Time {
 // between deliveries or while blocked on a claim, so an in-flight delivery is
 // always allowed to finish and record its outcome before the loop exits.
 func (w *Worker) Run(ctx context.Context) error {
+	// worker_id is deliberately absent: the injected logger already carries it,
+	// and repeating it emits the same JSON key twice, which consumers may drop
+	// or resolve inconsistently.
 	w.logger.Info("worker started",
-		"worker_id", w.workerID,
 		"claim_timeout", w.claimTimeout,
 		"promote_every", w.promoteEvery,
 		"heartbeat_every", w.heartbeatEvery,
@@ -379,7 +382,10 @@ func (w *Worker) process(ctx context.Context, id uuid.UUID) {
 	if deliverErr != nil && provider.IsPermanent(deliverErr) {
 		logger.Error("delivery failed permanently, dead-lettering without retry",
 			"channel", n.Channel, "error", deliverErr)
-		if err := w.setStatus(ctx, logger, id, store.StatusDeadLettered); err != nil {
+		// DeadLetter, not a plain status write: it also increments attempts, so
+		// the row does not claim zero attempts while its history shows one.
+		if _, err := w.store.DeadLetter(ctx, id); err != nil {
+			logger.Error("dead-lettering failed", "error", err)
 			return
 		}
 		w.ack(ctx, logger, id)

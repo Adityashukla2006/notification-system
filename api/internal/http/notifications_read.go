@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -68,7 +69,15 @@ func handleListNotifications(reader NotificationReader) http.HandlerFunc {
 			return
 		}
 
-		q := req.URL.Query()
+		// Parse the raw query explicitly. req.URL.Query() discards parameters it
+		// cannot parse and reports no error, so a client whose cursor is mangled
+		// in transit would silently be handed page one again — and a paginating
+		// loop would never advance. A broken query is worth a 400.
+		q, err := url.ParseQuery(req.URL.RawQuery)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "malformed query string", "")
+			return
+		}
 
 		status := store.Status(q.Get("status"))
 		if status != "" && !validStatus(status) {

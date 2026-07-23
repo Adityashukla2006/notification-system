@@ -219,6 +219,33 @@ RETURNING` + selectColumns
 	return n, nil
 }
 
+// DeadLetter records a final, unretryable failure: it increments attempts and
+// marks the notification dead_lettered in one statement.
+//
+// This exists because a permanent failure skips RecordFailure entirely — there
+// is no retry to schedule — and RecordFailure was the only thing incrementing
+// the counter. Without this, a dead-lettered notification reported zero
+// attempts while its own delivery_attempts history showed one, so the row
+// contradicted itself.
+func (s *Store) DeadLetter(ctx context.Context, id uuid.UUID) (Notification, error) {
+	const q = `
+UPDATE notifications
+SET attempts   = attempts + 1,
+    status     = $2,
+    updated_at = now()
+WHERE id = $1
+RETURNING` + selectColumns
+
+	n, err := scanNotification(s.pool.QueryRow(ctx, q, id, StatusDeadLettered))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Notification{}, ErrNotFound
+	}
+	if err != nil {
+		return Notification{}, fmt.Errorf("dead-lettering notification: %w", err)
+	}
+	return n, nil
+}
+
 // ReapStuck finds notifications that should be moving but are not, marks them
 // queued, and returns their ids so the caller can put them back on the queue.
 //
