@@ -1,24 +1,13 @@
-# Local development dependencies only: Postgres (source of truth) and Redis
-# (ephemeral coordination). The API and worker binaries run on the host against
-# these. Healthchecks let `docker compose up --wait` block until both are
-# actually accepting connections.
+# Local development dependency: Redis (ephemeral coordination). The API and
+# worker binaries run on the host against it. The healthcheck lets
+# `docker compose up --wait` block until Redis is actually accepting
+# connections.
+#
+# Postgres is deliberately NOT here: this machine runs a native Postgres on
+# 5432. Publishing a container on the same port meant the native server
+# silently won every host connection, and the resulting authentication
+# failures pointed at the wrong server entirely.
 services:
-  postgres:
-    image: postgres:17-alpine
-    environment:
-      POSTGRES_USER: app
-      POSTGRES_PASSWORD: app_password
-      POSTGRES_DB: notifications
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U app -d notifications"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-
   redis:
     image: redis:7-alpine
     ports:
@@ -28,6 +17,3 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
-
-volumes:
-  postgres_data:
