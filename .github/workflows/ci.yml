@@ -99,18 +99,29 @@ jobs:
             exit 1
           fi
 
+      # A dedicated database, because "from scratch" has to mean it. The store
+      # tests above build their schema by applying the migration SQL directly,
+      # without recording a version — so running this against the same database
+      # would find the tables already there, and migrate would correctly refuse
+      # to create them again.
       - name: Verify migrations apply cleanly from scratch
         working-directory: api
         env:
+          PGPASSWORD: app_password
           POSTGRES_HOST: localhost
           POSTGRES_PORT: "5432"
           POSTGRES_USER: app
           POSTGRES_PASSWORD: app_password
-          POSTGRES_DBNAME: notifications_test
+          POSTGRES_DBNAME: migrate_check
           POSTGRES_SSLMODE: disable
           REDIS_ADDR: localhost:6379
         run: |
+          psql -h localhost -U app -d postgres -c 'DROP DATABASE IF EXISTS migrate_check'
+          psql -h localhost -U app -d postgres -c 'CREATE DATABASE migrate_check'
+
           go run ./cmd/migrate -status
+          go run ./cmd/migrate
+          # Applying twice must be a no-op, or a redeploy would fail.
           go run ./cmd/migrate
           go run ./cmd/migrate -status
 
