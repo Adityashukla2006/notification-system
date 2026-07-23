@@ -70,7 +70,7 @@ func run() error {
 	sch := queue.NewScheduler(rdb)
 	notifications := notification.New(st, q, sch, logger)
 
-	handler := apihttp.Router(logger, pool, redisPinger{rdb}, st, notifications)
+	handler := apihttp.Router(logger, pool, redisPinger{rdb}, st, notifications, st)
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,

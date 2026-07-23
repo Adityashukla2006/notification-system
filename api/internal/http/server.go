@@ -30,7 +30,7 @@ const readinessTimeout = 2 * time.Second
 // Router constructs the API's HTTP handler. postgres and redis are pinged by
 // the readiness probe; keys backs API-key authentication for protected routes;
 // notifications accepts ingestion requests; logger is used for request logging.
-func Router(logger *slog.Logger, postgres, redis Pinger, keys APIKeyLookup, notifications NotificationCreator) http.Handler {
+func Router(logger *slog.Logger, postgres, redis Pinger, keys APIKeyLookup, notifications NotificationCreator, reader NotificationReader) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(middleware.RequestID)
@@ -45,6 +45,13 @@ func Router(logger *slog.Logger, postgres, redis Pinger, keys APIKeyLookup, noti
 		r.Use(APIKeyAuth(logger, keys))
 		r.Get("/me", handleMe())
 		r.Post("/notifications", handleCreateNotification(notifications))
+
+		// Read endpoints. Every one is scoped to the authenticated client, so
+		// a notification belonging to another tenant is indistinguishable from
+		// one that does not exist.
+		r.Get("/notifications", handleListNotifications(reader))
+		r.Get("/notifications/{id}", handleGetNotification(reader))
+		r.Get("/notifications/{id}/attempts", handleListAttempts(reader))
 	})
 
 	return r
