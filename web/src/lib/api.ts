@@ -1,6 +1,12 @@
 import "server-only";
 
-import type { Attempt, Notification, NotificationPage } from "./types";
+import type {
+  Attempt,
+  Channel,
+  Notification,
+  NotificationPage,
+  Status,
+} from "./types";
 
 /**
  * Server-side client for the notification API.
@@ -45,7 +51,31 @@ export class ApiUnreachableError extends Error {
   }
 }
 
-async function request<T>(path: string): Promise<T> {
+interface RequestOptions {
+  method?: string;
+  body?: unknown;
+  /** Extra headers, used for Idempotency-Key on writes. */
+  headers?: Record<string, string>;
+}
+
+/** A status code and decoded body, for callers that interpret both. */
+interface RawResponse {
+  status: number;
+  body: unknown;
+}
+
+/**
+ * Sends a request and returns the status alongside the decoded body, without
+ * throwing on a non-2xx.
+ *
+ * Writes use this rather than `request` because a rejected notification is not
+ * an exceptional condition — 400 and 409 are answers, and they need to reach
+ * the form field that caused them.
+ */
+async function requestRaw(
+  path: string,
+  options: RequestOptions = {},
+): Promise<RawResponse> {
   if (!API_KEY) {
     throw new ApiError(
       401,
@@ -53,13 +83,21 @@ async function request<T>(path: string): Promise<T> {
     );
   }
 
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${API_KEY}`,
+    Accept: "application/json",
+    ...options.headers,
+  };
+  if (options.body !== undefined) {
+    headers["Content-Type"] = "application/json";
+  }
+
   let response: Response;
   try {
     response = await fetch(`${BASE_URL}${path}`, {
-      headers: {
-        Authorization: `Bearer ${API_KEY}`,
-        Accept: "application/json",
-      },
+      method: options.method ?? "GET",
+      headers,
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
       // A dashboard must never show stale delivery state, and fetch is not
       // cached by default in this version — this makes the intent explicit
       // rather than dependent on a default.
@@ -70,22 +108,33 @@ async function request<T>(path: string): Promise<T> {
     throw new ApiUnreachableError(cause);
   }
 
-  if (!response.ok) {
-    throw new ApiError(response.status, await errorMessage(response));
-  }
-
-  return (await response.json()) as T;
+  return { status: response.status, body: await json(response) };
 }
 
-/** Extracts the API's error message, falling back to the status text. */
-async function errorMessage(response: Response): Promise<string> {
+/** Reads a JSON body, tolerating a non-JSON one. */
+async function json(response: Response): Promise<unknown> {
   try {
-    const body = (await response.json()) as { error?: string };
-    if (body.error) return body.error;
+    return await response.json();
   } catch {
-    // Body was not JSON; fall through to the status line.
+    return null;
   }
-  return `${response.status} ${response.statusText}`;
+}
+
+/**
+ * Sends a read request, throwing on anything that is not a success.
+ *
+ * Reads have no useful non-2xx outcome for the person looking at the page, so
+ * failures become an error state rather than something each caller unpacks.
+ */
+async function request<T>(path: string): Promise<T> {
+  const { status, body } = await requestRaw(path);
+
+  if (status < 200 || status >= 300) {
+    const message = (body as { error?: string } | null)?.error;
+    throw new ApiError(status, message ?? `Request failed with ${status}`);
+  }
+
+  return body as T;
 }
 
 export interface ListOptions {
@@ -119,6 +168,70 @@ export async function listAttempts(id: string): Promise<Attempt[]> {
     `/v1/notifications/${encodeURIComponent(id)}/attempts`,
   );
   return body.data;
+}
+
+/** A notification to submit. Mirrors the API's accepted body. */
+export interface CreateInput {
+  channel: Channel;
+  recipient: string;
+  payload: unknown;
+  /** RFC3339. Omitted means "send now" — the API defaults it. */
+  scheduled_at?: string;
+  max_attempts?: number;
+}
+
+/** What the API decided about a submitted notification. */
+export type CreateResult =
+  | { ok: true; id: string; status: Status }
+  | { ok: false; error: string; field?: string };
+
+/**
+ * Submits a notification.
+ *
+ * The idempotency key is the caller's, not this function's, deliberately: the
+ * key is what makes a retry safe, and only the caller knows whether a second
+ * submission is the same intent (a double-click) or a genuinely new one.
+ *
+ * 400 and 409 are returned as values rather than thrown. They are the two
+ * outcomes a person can act on — a bad field, or a key reused with different
+ * content — and both belong next to the form input that caused them, not on an
+ * error page.
+ */
+export async function createNotification(
+  input: CreateInput,
+  idempotencyKey: string,
+): Promise<CreateResult> {
+  const { status, body } = await requestRaw("/v1/notifications", {
+    method: "POST",
+    body: input,
+    headers: { "Idempotency-Key": idempotencyKey },
+  });
+
+  const decoded = (body ?? {}) as {
+    id?: string;
+    status?: Status;
+    error?: string;
+    field?: string;
+  };
+
+  // 202 is the only success this endpoint returns; delivery is asynchronous, so
+  // it means "accepted", never "delivered".
+  if (status === 202 && decoded.id) {
+    return { ok: true, id: decoded.id, status: decoded.status ?? "pending" };
+  }
+
+  if (status === 400 || status === 409) {
+    return {
+      ok: false,
+      error: decoded.error ?? "The API rejected this notification.",
+      field: decoded.field,
+    };
+  }
+
+  // Anything else — 401, 429, 500, an unreachable provider — is not something
+  // the person filling in the form can fix by editing a field, so it surfaces
+  // as an error rather than field-level feedback.
+  throw new ApiError(status, decoded.error ?? `Request failed with ${status}`);
 }
 
 /** The API base URL, for display in operator-facing error states. */

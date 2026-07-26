@@ -38,11 +38,16 @@ export default function RootLayout({
               </span>
               <span className="text-sm text-muted">delivery dashboard</span>
             </Link>
-            {/* The dashboard is read-only by design: it observes the system,
-                it never sends. Sending is the API's job. */}
-            <span className="rounded-full bg-surface-muted px-2.5 py-1 text-xs text-muted">
-              read-only
-            </span>
+            {/* The dashboard can now send, but only the way any other client
+                would: through the public API, over the same authenticated
+                endpoint, with no privileged path into the queue or the
+                database. */}
+            <Link
+              href="/notifications/new"
+              className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-background"
+            >
+              New notification
+            </Link>
           </div>
         </header>
 
