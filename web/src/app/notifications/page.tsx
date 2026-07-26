@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Suspense } from "react";
 
 import { ApiErrorState } from "@/components/ApiErrorState";
+import { AutoRefresh } from "@/components/AutoRefresh";
 import { Filters } from "@/components/Filters";
 import { Pagination, parseTrail } from "@/components/Pagination";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -50,9 +51,15 @@ export default async function NotificationsPage({
             Newest first. Select one to see its delivery history.
           </p>
         </div>
-        <Suspense fallback={null}>
-          <Filters />
-        </Suspense>
+        <div className="flex flex-wrap items-center gap-4">
+          <Suspense fallback={null}>
+            <Filters />
+          </Suspense>
+          {/* Only the first page auto-refreshes. Deeper pages are addressed by
+              a cursor into a result set that shifts as rows are added, so
+              refreshing one would quietly change what it contains. */}
+          {!cursor && <AutoRefresh />}
+        </div>
       </div>
 
       <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface">
@@ -140,8 +147,16 @@ function EmptyState({ filtered }: { filtered: boolean }) {
       <p className="mx-auto mt-1 max-w-md text-sm text-muted">
         {filtered
           ? "Nothing matches these filters. Try clearing them."
-          : "Nothing has been accepted yet. POST to /v1/notifications and it will appear here."}
+          : "Nothing has been accepted yet. POST to /v1/notifications, or send one from here."}
       </p>
+      {!filtered && (
+        <Link
+          href="/notifications/new"
+          className="mt-4 inline-block rounded-md bg-accent px-4 py-2 text-sm font-medium text-background"
+        >
+          New notification
+        </Link>
+      )}
     </div>
   );
 }

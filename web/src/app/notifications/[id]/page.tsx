@@ -3,7 +3,9 @@ import { notFound } from "next/navigation";
 
 import { ApiErrorState } from "@/components/ApiErrorState";
 import { AttemptList } from "@/components/AttemptList";
+import { AutoRefresh } from "@/components/AutoRefresh";
 import { StatusBadge } from "@/components/StatusBadge";
+import { Timeline } from "@/components/Timeline";
 import { ApiError, getNotification, listAttempts } from "@/lib/api";
 import {
   absoluteTime,
@@ -11,7 +13,7 @@ import {
   relativeTime,
   shortId,
 } from "@/lib/format";
-import type { Attempt, Notification } from "@/lib/types";
+import { isTerminal, type Attempt, type Notification } from "@/lib/types";
 
 type Params = Promise<{ id: string }>;
 
@@ -49,13 +51,17 @@ export default async function NotificationDetailPage({
 
   return (
     <div className="space-y-6">
-      <div>
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <Link
           href="/notifications"
           className="text-sm text-muted hover:text-foreground"
         >
           ← All notifications
         </Link>
+        {/* Polling a settled notification would ask the API the same question
+            forever: delivered and dead-lettered are terminal, so nothing about
+            this page can change again. */}
+        <AutoRefresh defaultPaused={isTerminal(notification.status)} />
       </div>
 
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -70,6 +76,8 @@ export default async function NotificationDetailPage({
         </div>
         <StatusBadge status={notification.status} />
       </div>
+
+      <Timeline notification={notification} attempts={attempts} />
 
       <section className="rounded-lg border border-border-subtle bg-surface">
         <h2 className="border-b border-border-subtle px-4 py-3 text-sm font-medium">
