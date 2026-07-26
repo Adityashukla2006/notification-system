@@ -151,7 +151,7 @@ api/
   cmd/          server, worker, migrate, keygen
   internal/     store (SQL), queue (Redis), worker, provider, http, …
   migrations/   paired up/down SQL
-web/            Next.js dashboard, read-only
+web/            Next.js dashboard: browse deliveries, send one by hand
 docs/           design notes
 ```
 

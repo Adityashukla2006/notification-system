@@ -127,6 +127,18 @@ The dashboard reads the API key server-side only, deliberately without Next's
 `NEXT_PUBLIC_` prefix, which would inline it into the browser bundle. The key
 carries write access, so this is a security boundary rather than a preference.
 
+That boundary is what shapes the dashboard's send form. The browser posts to a
+Server Action on the Next server, which holds the key and calls the API; the
+browser never talks to the API directly. `web/src/lib/api.ts` is marked
+`server-only`, so importing it from a Client Component fails the build instead
+of shipping a write-capable credential to every visitor.
+
+The form has no privileged path either — it sends the same `POST
+/v1/notifications` any client would, including the `Idempotency-Key` header.
+Leaving that key editable is deliberate: submitting twice with the same key
+returns the original notification rather than creating a second, which is the
+constraint doing its job where you can see it.
+
 ## Rate limiting
 
 A sliding window counter, not a fixed window. With a fixed window and a limit of
