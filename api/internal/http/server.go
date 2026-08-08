@@ -43,9 +43,6 @@ func Router(logger *slog.Logger, postgres, redis Pinger, keys APIKeyLookup, noti
 	// Everything under /v1 requires a valid API key.
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(APIKeyAuth(logger, keys))
-		// Rate limiting runs after authentication because the limit is per
-		// client: the authenticated id is the identity worth limiting, and it
-		// cannot be rotated the way a source address can.
 		r.Use(RateLimit(logger, limiter))
 
 		r.Get("/me", handleMe())

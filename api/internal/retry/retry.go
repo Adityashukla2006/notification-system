@@ -26,18 +26,6 @@ type Policy struct {
 // before jitter, never exceeding 5 minutes.
 var DefaultPolicy = Policy{Base: time.Second, Max: 5 * time.Minute}
 
-// Backoff returns how long to wait before the given attempt number, where
-// attempt is the count of deliveries already made (1 after the first failure).
-//
-// The delay grows exponentially and is then jittered. Jitter matters more than
-// it looks: without it, a provider outage that fails a thousand notifications at
-// once retries all thousand in lockstep, so the recovering provider is hit by
-// the same synchronized spike that is still failing. Spreading the retries is
-// what lets it actually recover.
-//
-// This uses EQUAL jitter — half the delay fixed, half random — rather than full
-// jitter, so the schedule keeps a guaranteed floor and cannot collapse back to
-// retrying almost immediately.
 func (p Policy) Backoff(attempt int) time.Duration {
 	return p.backoff(attempt, rand.Float64)
 }

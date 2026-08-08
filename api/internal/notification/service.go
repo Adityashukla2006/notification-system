@@ -263,3 +263,9 @@ func AsValidationError(err error) (ValidationError, bool) {
 	}
 	return ValidationError{}, false
 }
+
+func main() {
+	results := make(chan int, 5)
+	results <- 4
+	fmt.Println(results)
+}

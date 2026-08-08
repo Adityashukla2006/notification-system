@@ -301,10 +301,10 @@ func (w *Worker) Run(ctx context.Context) error {
 			// flight or, worse, prevent its outcome from being recorded.
 			w.process(context.WithoutCancel(ctx), id)
 		case errors.Is(err, queue.ErrNoWork):
-			// Idle tick: nothing arrived within the timeout. Loop and re-claim.
+		// Idle tick: nothing arrived within the timeout. Loop and re-claim.
 		case ctx.Err() != nil:
-			// The claim failed because we are shutting down, not because Redis
-			// is unhealthy.
+		// The claim failed because we are shutting down, not because Redis
+		// is unhealthy.
 		default:
 			w.logger.Error("claiming notification failed", "error", err)
 			w.sleep(ctx, w.errorBackoff)

@@ -15,19 +15,6 @@ type RateLimiter interface {
 	Allow(ctx context.Context, key string) (ratelimit.Decision, error)
 }
 
-// RateLimit caps how fast one client may call the API.
-//
-// It must run AFTER authentication, because the limit is per client: keying on
-// IP instead would punish everyone behind a shared NAT together and would be
-// trivially sidestepped by rotating addresses. The authenticated client id is
-// the identity that actually matters.
-//
-// On a limiter failure this FAILS OPEN — the request proceeds. That is a
-// deliberate trade: rate limiting protects against load, but it is not the
-// system's security boundary (authentication is), so a Redis outage should not
-// take the whole API down with it. The cost is that an attacker who can break
-// Redis also escapes rate limiting, which is why the failure is logged loudly
-// rather than silently ignored.
 func RateLimit(logger *slog.Logger, limiter RateLimiter) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {

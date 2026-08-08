@@ -76,8 +76,8 @@ services:
     environment: &pg_env
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
-      POSTGRES_USER: app
-      POSTGRES_PASSWORD: app_password
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: Tennis1234@
       POSTGRES_DBNAME: notifications
       POSTGRES_SSLMODE: disable
       REDIS_ADDR: redis:6379

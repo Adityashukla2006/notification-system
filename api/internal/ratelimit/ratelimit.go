@@ -54,12 +54,6 @@ func New(client *redis.Client, limit int, window time.Duration) *Limiter {
 	return &Limiter{client: client, limit: limit, window: window, now: time.Now}
 }
 
-// Allow records a request against key and reports whether it may proceed.
-//
-// The request is counted BEFORE the decision, so a client that keeps hammering
-// while limited keeps its own counter high. That is deliberate: a rejected
-// request still costs the server work, and not counting it would let a client
-// stay permanently at the ceiling by ignoring 429s.
 func (l *Limiter) Allow(ctx context.Context, key string) (Decision, error) {
 	now := l.now()
 
@@ -73,7 +67,7 @@ func (l *Limiter) Allow(ctx context.Context, key string) (Decision, error) {
 	previousKey := fmt.Sprintf("%s%s:%d", keyPrefix, key, currentStart-1)
 
 	// One round trip for all three operations. The TTL is two windows because
-	// the previous bucket is still needed while the current one runs.
+	// the previous bucket is still needed while 	the current one runs.
 	pipe := l.client.Pipeline()
 	incr := pipe.Incr(ctx, currentKey)
 	pipe.Expire(ctx, currentKey, 2*l.window)
