@@ -94,8 +94,8 @@ services:
       <<: *pg_env
       HTTP_ADDR: ":8080"
       LOG_LEVEL: info
-      RATE_LIMIT_REQUESTS: "100"
-      RATE_LIMIT_WINDOW: 1m
+      RATE_LIMIT_RATE: "1.6667"
+      RATE_LIMIT_BURST: "20"
     ports:
       - "8080:8080"
     depends_on:

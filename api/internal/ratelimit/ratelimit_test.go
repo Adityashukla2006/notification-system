@@ -26,199 +26,119 @@ func requireRedis(t *testing.T) *redis.Client {
 	return client
 }
 
-// testKey returns a key unique to one test, so tests never share a counter.
+// testKey returns a key unique to one test, so tests never share a bucket.
 func testKey() string {
 	return "test-" + uuid.NewString()
 }
 
-func TestAllowUnderLimit(t *testing.T) {
-	client := requireRedis(t)
-	ctx := context.Background()
-
-	l := New(client, 5, time.Minute)
-	key := testKey()
-
-	for i := 1; i <= 5; i++ {
-		d, err := l.Allow(ctx, key)
+// allowN calls Allow n times and returns the decisions.
+func allowN(t *testing.T, l *Limiter, key string, n int) []Decision {
+	t.Helper()
+	out := make([]Decision, 0, n)
+	for i := range n {
+		d, err := l.Allow(context.Background(), key)
 		if err != nil {
-			t.Fatalf("Allow #%d: %v", i, err)
+			t.Fatalf("Allow #%d: %v", i+1, err)
 		}
+		out = append(out, d)
+	}
+	return out
+}
+
+// TestBurstThenReject is the core bucket behaviour: a fresh client may spend
+// exactly Burst requests at once, then is rejected. The rate is tiny so no
+// refill happens during the test.
+func TestBurstThenReject(t *testing.T) {
+	l := New(requireRedis(t), 0.001, 3)
+	ds := allowN(t, l, testKey(), 4)
+
+	for i, d := range ds[:3] {
 		if !d.Allowed {
-			t.Fatalf("request #%d denied, want allowed within a limit of 5", i)
+			t.Fatalf("request #%d denied, want allowed within a burst of 3", i+1)
 		}
-		if want := 5 - i; d.Remaining != want {
-			t.Errorf("request #%d remaining = %d, want %d", i, d.Remaining, want)
+		if want := 2 - i; d.Remaining != want {
+			t.Errorf("request #%d remaining = %d, want %d", i+1, d.Remaining, want)
 		}
+		if d.Limit != 3 {
+			t.Errorf("request #%d limit = %d, want 3", i+1, d.Limit)
+		}
+	}
+	if ds[3].Allowed {
+		t.Fatal("request #4 allowed, want rejected once the burst is spent")
+	}
+	if ds[3].RetryAfter < time.Second {
+		t.Errorf("RetryAfter = %v, want at least 1s", ds[3].RetryAfter)
+	}
+	if !ds[3].ResetAt.After(time.Now()) {
+		t.Errorf("ResetAt = %v, want a time in the future", ds[3].ResetAt)
 	}
 }
 
-func TestAllowRejectsOverLimit(t *testing.T) {
-	client := requireRedis(t)
-	ctx := context.Background()
+// TestBurstIsBounded is the reason this replaced a per-minute window: however
+// long a client has been idle, it can never get more than Burst requests
+// through at once. A per-minute window with the same average (here 600/min)
+// would have admitted all 50.
+func TestBurstIsBounded(t *testing.T) {
+	l := New(requireRedis(t), 10, 5)
+	ds := allowN(t, l, testKey(), 50)
 
-	l := New(client, 3, time.Minute)
-	key := testKey()
-
-	for i := 1; i <= 3; i++ {
-		if d, err := l.Allow(ctx, key); err != nil || !d.Allowed {
-			t.Fatalf("request #%d: allowed=%v err=%v, want allowed", i, d.Allowed, err)
+	allowed := 0
+	for _, d := range ds {
+		if d.Allowed {
+			allowed++
 		}
 	}
+	// 5 from the full bucket, plus at most a token or two refilled at 10/s
+	// during the few milliseconds the 50 calls take.
+	if allowed < 5 || allowed > 7 {
+		t.Errorf("allowed %d of 50 back-to-back requests, want 5 (+ at most 2 refilled)", allowed)
+	}
+}
 
-	d, err := l.Allow(ctx, key)
-	if err != nil {
-		t.Fatalf("Allow: %v", err)
+// TestTokensRefillAtRate confirms the limit is temporary and follows the
+// configured rate.
+func TestTokensRefillAtRate(t *testing.T) {
+	l := New(requireRedis(t), 20, 1) // one token every 50 ms
+	key := testKey()
+
+	ds := allowN(t, l, key, 2)
+	if !ds[0].Allowed || ds[1].Allowed {
+		t.Fatalf("got allowed=%v,%v, want true,false", ds[0].Allowed, ds[1].Allowed)
 	}
-	if d.Allowed {
-		t.Error("fourth request allowed, want denied at a limit of 3")
-	}
-	if d.Remaining != 0 {
-		t.Errorf("remaining = %d, want 0", d.Remaining)
-	}
-	if d.RetryAfter < time.Second {
-		t.Errorf("retry after = %v, want at least a second", d.RetryAfter)
-	}
-	if d.ResetAt.Before(time.Now()) {
-		t.Errorf("reset at %v is in the past", d.ResetAt)
+
+	time.Sleep(120 * time.Millisecond) // > 2 refill intervals
+
+	if d := allowN(t, l, key, 1)[0]; !d.Allowed {
+		t.Error("request after refill denied, want allowed")
 	}
 }
 
 // TestLimitsAreIsolatedPerKey guards the multi-tenant property: one client
-// exhausting its budget must not affect another.
+// emptying its bucket must not affect another.
 func TestLimitsAreIsolatedPerKey(t *testing.T) {
-	client := requireRedis(t)
-	ctx := context.Background()
-
-	l := New(client, 2, time.Minute)
+	l := New(requireRedis(t), 0.001, 2)
 	noisy, quiet := testKey(), testKey()
 
-	for range 3 {
-		if _, err := l.Allow(ctx, noisy); err != nil {
-			t.Fatalf("Allow: %v", err)
-		}
-	}
-	if d, _ := l.Allow(ctx, noisy); d.Allowed {
-		t.Error("noisy key still allowed, want denied")
-	}
+	allowN(t, l, noisy, 5)
 
-	d, err := l.Allow(ctx, quiet)
-	if err != nil {
-		t.Fatalf("Allow: %v", err)
-	}
-	if !d.Allowed {
-		t.Error("quiet key denied because another key was limited")
+	if d := allowN(t, l, quiet, 1)[0]; !d.Allowed {
+		t.Error("quiet client denied after a noisy client emptied its own bucket")
 	}
 }
 
-// TestSlidingWindowPreventsBoundaryBurst is the reason this is a sliding window
-// rather than a fixed one.
-//
-// With fixed windows, a client can spend its entire budget at the end of one
-// window and its entire budget again at the start of the next — double the
-// intended rate across the boundary. Here the previous window's usage is
-// weighted in, so entering a new window does not hand back a full budget.
-func TestSlidingWindowPreventsBoundaryBurst(t *testing.T) {
+// TestBucketsExpire keeps Redis from holding a bucket per client forever: an
+// idle bucket is dropped once it would be full again anyway.
+func TestBucketsExpire(t *testing.T) {
 	client := requireRedis(t)
-	ctx := context.Background()
-
-	const window = 2 * time.Second
-	const limit = 4
+	l := New(client, 10, 5) // full again after 0.5 s, so expiry ~1.5 s
 	key := testKey()
+	allowN(t, l, key, 1)
 
-	l := New(client, limit, window)
-
-	// Pin the clock near the very end of a window, then exhaust the budget.
-	windowNS := window.Nanoseconds()
-	base := time.Now()
-	windowStart := time.Unix(0, (base.UnixNano()/windowNS)*windowNS)
-	nearEnd := windowStart.Add(window - 100*time.Millisecond)
-
-	l.now = func() time.Time { return nearEnd }
-	for i := 1; i <= limit; i++ {
-		if d, err := l.Allow(ctx, key); err != nil || !d.Allowed {
-			t.Fatalf("setup request #%d: allowed=%v err=%v", i, d.Allowed, err)
-		}
-	}
-
-	// Step just past the boundary. A fixed window would reset to a full budget
-	// here; the weighted previous window must still deny.
-	justAfter := windowStart.Add(window + 100*time.Millisecond)
-	l.now = func() time.Time { return justAfter }
-
-	d, err := l.Allow(ctx, key)
+	ttl, err := client.PTTL(context.Background(), keyPrefix+key).Result()
 	if err != nil {
-		t.Fatalf("Allow: %v", err)
+		t.Fatalf("PTTL: %v", err)
 	}
-	if d.Allowed {
-		t.Error("request allowed immediately after the window boundary; " +
-			"the previous window's usage was not carried over")
-	}
-}
-
-// TestBudgetRecoversAfterAWholeWindow confirms the limit is temporary: once the
-// previous window has fully aged out, the client is served again.
-func TestBudgetRecoversAfterAWholeWindow(t *testing.T) {
-	client := requireRedis(t)
-	ctx := context.Background()
-
-	const window = 2 * time.Second
-	key := testKey()
-	l := New(client, 2, window)
-
-	base := time.Now()
-	l.now = func() time.Time { return base }
-	for range 3 {
-		if _, err := l.Allow(ctx, key); err != nil {
-			t.Fatalf("Allow: %v", err)
-		}
-	}
-	if d, _ := l.Allow(ctx, key); d.Allowed {
-		t.Fatal("client was not limited during setup")
-	}
-
-	// Two full windows later, nothing from the burst remains in scope.
-	later := base.Add(2 * window)
-	l.now = func() time.Time { return later }
-
-	d, err := l.Allow(ctx, key)
-	if err != nil {
-		t.Fatalf("Allow: %v", err)
-	}
-	if !d.Allowed {
-		t.Error("still limited two windows after the burst, want the budget restored")
-	}
-}
-
-// TestCountersExpire keeps Redis from accumulating a key per client forever.
-func TestCountersExpire(t *testing.T) {
-	client := requireRedis(t)
-	ctx := context.Background()
-
-	const window = time.Second
-	key := testKey()
-	l := New(client, 10, window)
-
-	if _, err := l.Allow(ctx, key); err != nil {
-		t.Fatalf("Allow: %v", err)
-	}
-
-	keys, err := client.Keys(ctx, keyPrefix+key+":*").Result()
-	if err != nil {
-		t.Fatalf("listing keys: %v", err)
-	}
-	if len(keys) == 0 {
-		t.Fatal("no counter key was written")
-	}
-
-	ttl, err := client.TTL(ctx, keys[0]).Result()
-	if err != nil {
-		t.Fatalf("TTL: %v", err)
-	}
-	if ttl <= 0 {
-		t.Errorf("counter TTL = %v, want a positive expiry so keys do not leak", ttl)
-	}
-	// Two windows: the previous bucket is still needed while the current runs.
-	if ttl > 2*window {
-		t.Errorf("counter TTL = %v, want at most two windows (%v)", ttl, 2*window)
+	if ttl <= 0 || ttl > 2*time.Second {
+		t.Errorf("bucket TTL = %v, want set and at most ~1.5s", ttl)
 	}
 }

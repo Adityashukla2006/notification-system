@@ -1,107 +1,135 @@
 // Package ratelimit caps how fast one client may call the API.
 //
-// It uses a SLIDING WINDOW COUNTER: two fixed buckets, with the previous one
-// weighted by how far the current window has progressed.
+// It uses a TOKEN BUCKET per client: a bucket holds up to Burst tokens and
+// refills continuously at Rate tokens per second; each request takes one token
+// or is rejected.
 //
-// The obvious alternative, a plain fixed window, is cheaper but has a flaw that
-// matters. With a limit of 100 per minute, a client can send 100 requests at
-// 11:59:59 and 100 more at 12:00:00 — 200 in one second, twice the intended
-// rate, precisely at the boundary an attacker would target. Weighting the
-// previous bucket smooths that edge away.
+// It replaced a per-minute sliding window, which bounded the average but not
+// the burst: a client could spend a whole minute's budget in a few seconds. A
+// benchmark showed exactly that — a noisy tenant sent 6,000 requests in 30 s,
+// built a backlog, and pushed a quiet tenant's p99 latency to ~17 s. A bucket
+// can never be more than Burst requests ahead of its steady rate, whatever the
+// window alignment.
 //
-// The other alternative, a true sliding window, stores a timestamp per request
-// and is exact — but its memory grows with traffic, which is the wrong thing to
-// scale with the load you are trying to survive. Two counters per client per
-// window is bounded no matter what arrives.
+// State is two numbers per client (tokens, last refill time), so memory is
+// bounded no matter what arrives, and idle buckets expire once they would be
+// full again anyway.
 package ratelimit
 
 import (
 	"context"
 	"fmt"
+	"math"
+	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 )
 
-// keyPrefix namespaces rate-limit counters in Redis.
-const keyPrefix = "ratelimit:"
+// keyPrefix namespaces rate-limit buckets in Redis.
+const keyPrefix = "ratelimit:tb:"
 
 // Decision is the outcome of one rate-limit check, carrying everything the HTTP
 // layer needs to answer the caller.
 type Decision struct {
 	// Allowed reports whether the request may proceed.
 	Allowed bool
-	// Limit is the configured ceiling per window.
+	// Limit is the bucket size: the most requests a client may make at once.
 	Limit int
-	// Remaining is how many requests are left, never negative.
+	// Remaining is how many whole tokens are left, never negative.
 	Remaining int
-	// RetryAfter is how long to wait before trying again. Zero when allowed.
+	// RetryAfter is how long until one token is available. Zero when allowed.
 	RetryAfter time.Duration
-	// ResetAt is when the current window ends.
+	// ResetAt is when the bucket will be full again.
 	ResetAt time.Time
 }
 
-// Limiter enforces a request ceiling per key per window.
+// bucketScript refills and spends from one bucket atomically, using Redis's
+// own clock so every API instance agrees on time.
+//
+// KEYS: 1 bucket hash
+// ARGV: 1 rate (tokens/s), 2 burst
+// Returns {allowed (0|1), tokens left, now} with numbers as strings.
+var bucketScript = redis.NewScript(`
+local t = redis.call('TIME')
+local now = tonumber(t[1]) + tonumber(t[2]) / 1000000
+local rate = tonumber(ARGV[1])
+local burst = tonumber(ARGV[2])
+local b = redis.call('HMGET', KEYS[1], 'tokens', 'ts')
+local tokens = tonumber(b[1])
+local ts = tonumber(b[2])
+if tokens == nil or ts == nil then
+  tokens = burst
+  ts = now
+end
+local elapsed = now - ts
+if elapsed < 0 then elapsed = 0 end
+tokens = math.min(burst, tokens + elapsed * rate)
+local allowed = 0
+if tokens >= 1 then
+  tokens = tokens - 1
+  allowed = 1
+end
+redis.call('HSET', KEYS[1], 'tokens', string.format('%.6f', tokens), 'ts', string.format('%.6f', now))
+redis.call('PEXPIRE', KEYS[1], math.ceil(burst / rate * 1000) + 1000)
+return {allowed, string.format('%.6f', tokens), string.format('%.6f', now)}
+`)
+
+// Limiter enforces a token bucket per key.
 type Limiter struct {
 	client *redis.Client
-	limit  int
-	window time.Duration
-	now    func() time.Time
+	rate   float64
+	burst  int
 }
 
-// New constructs a Limiter allowing limit requests per window.
-func New(client *redis.Client, limit int, window time.Duration) *Limiter {
-	return &Limiter{client: client, limit: limit, window: window, now: time.Now}
+// New constructs a Limiter that refills rate tokens per second into buckets
+// holding at most burst tokens. rate must be > 0 and burst >= 1; config
+// validation guarantees both.
+func New(client *redis.Client, rate float64, burst int) *Limiter {
+	return &Limiter{client: client, rate: rate, burst: burst}
 }
 
+// Allow takes one token from key's bucket if one is available.
 func (l *Limiter) Allow(ctx context.Context, key string) (Decision, error) {
-	now := l.now()
-
-	// Bucket boundaries are derived from the clock rather than stored, so no
-	// coordination is needed: every process computes the same buckets.
-	windowNS := l.window.Nanoseconds()
-	currentStart := now.UnixNano() / windowNS
-	elapsed := time.Duration(now.UnixNano() % windowNS)
-
-	currentKey := fmt.Sprintf("%s%s:%d", keyPrefix, key, currentStart)
-	previousKey := fmt.Sprintf("%s%s:%d", keyPrefix, key, currentStart-1)
-
-	// One round trip for all three operations. The TTL is two windows because
-	// the previous bucket is still needed while 	the current one runs.
-	pipe := l.client.Pipeline()
-	incr := pipe.Incr(ctx, currentKey)
-	pipe.Expire(ctx, currentKey, 2*l.window)
-	prev := pipe.Get(ctx, previousKey)
-	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
-		// redis.Nil here only means the previous bucket does not exist, which
-		// is the normal case for a client's first window.
+	res, err := bucketScript.Run(ctx, l.client, []string{keyPrefix + key},
+		strconv.FormatFloat(l.rate, 'f', -1, 64), l.burst).Slice()
+	if err != nil {
 		return Decision{}, fmt.Errorf("checking rate limit for %s: %w", key, err)
 	}
-
-	currentCount := incr.Val()
-	previousCount, _ := prev.Int64() // absent previous bucket reads as zero
-
-	// Weight the previous window by the portion of it still inside the sliding
-	// window: at 25% into the current window, 75% of the previous one counts.
-	weight := 1 - (float64(elapsed) / float64(l.window))
-	estimated := float64(previousCount)*weight + float64(currentCount)
-
-	resetAt := time.Unix(0, (currentStart+1)*windowNS)
-
-	decision := Decision{
-		Limit:     l.limit,
-		Allowed:   estimated <= float64(l.limit),
-		Remaining: 0,
-		ResetAt:   resetAt,
+	if len(res) != 3 {
+		return Decision{}, fmt.Errorf("checking rate limit for %s: unexpected reply %v", key, res)
 	}
-	decision.Remaining = max(l.limit-int(estimated), 0)
-	if !decision.Allowed {
-		decision.RetryAfter = resetAt.Sub(now)
-		if decision.RetryAfter < time.Second {
-			// Never advertise a sub-second wait: a client that honors it would
-			// retry immediately and simply be rejected again.
-			decision.RetryAfter = time.Second
+
+	allowed, _ := res[0].(int64)
+	tokens, err := strconv.ParseFloat(fmt.Sprint(res[1]), 64)
+	if err != nil {
+		return Decision{}, fmt.Errorf("parsing tokens for %s: %w", key, err)
+	}
+	nowSec, err := strconv.ParseFloat(fmt.Sprint(res[2]), 64)
+	if err != nil {
+		return Decision{}, fmt.Errorf("parsing time for %s: %w", key, err)
+	}
+	now := time.Unix(0, int64(nowSec*1e9))
+
+	d := Decision{
+		Allowed:   allowed == 1,
+		Limit:     l.burst,
+		Remaining: max(int(math.Floor(tokens)), 0),
+		ResetAt:   now.Add(secs((float64(l.burst) - tokens) / l.rate)),
+	}
+	if !d.Allowed {
+		d.RetryAfter = secs((1 - tokens) / l.rate)
+		if d.RetryAfter < time.Second {
+			// Never advertise a sub-second wait: Retry-After is whole seconds,
+			// and a client that honors "0" would retry immediately and simply
+			// be rejected again.
+			d.RetryAfter = time.Second
 		}
 	}
-	return decision, nil
+	return d, nil
+}
+
+// secs converts fractional seconds to a Duration.
+func secs(s float64) time.Duration {
+	return time.Duration(s * float64(time.Second))
 }

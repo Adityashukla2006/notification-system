@@ -141,15 +141,27 @@ func (s SMTPConfig) Enabled() bool {
 	return s.Host != ""
 }
 
-// RateLimitConfig bounds per-client request rate.
+// RateLimitConfig bounds per-client request rate with a token bucket.
 type RateLimitConfig struct {
-	// Requests is how many requests one client may make per Window.
-	Requests int `env:"REQUESTS" envDefault:"100"`
+	// Rate is the steady rate, in requests per second, one client may sustain.
+	// The default keeps the previous average of 100 per minute.
+	Rate float64 `env:"RATE" envDefault:"1.6667"`
 
-	// Window is the period the ceiling applies over. The limiter uses a
-	// sliding window, so a client cannot double its rate by straddling a
-	// window boundary.
-	Window time.Duration `env:"WINDOW" envDefault:"1m"`
+	// Burst is the bucket size: how many requests a client may make at once
+	// after being idle. It is what bounds a burst, which a per-minute window
+	// could not do.
+	Burst int `env:"BURST" envDefault:"20"`
+}
+
+// validate rejects settings the limiter cannot work with.
+func (r RateLimitConfig) validate() error {
+	if !(r.Rate > 0) {
+		return fmt.Errorf("RATE_LIMIT_RATE must be greater than 0, got %v", r.Rate)
+	}
+	if r.Burst < 1 {
+		return fmt.Errorf("RATE_LIMIT_BURST must be at least 1, got %d", r.Burst)
+	}
+	return nil
 }
 
 // WorkerConfig holds the delivery worker's settings.
@@ -255,6 +267,9 @@ func Load() (Config, error) {
 	var cfg Config
 	if err := env.Parse(&cfg); err != nil {
 		return Config{}, fmt.Errorf("parsing config from environment: %w", err)
+	}
+	if err := cfg.RateLimit.validate(); err != nil {
+		return Config{}, err
 	}
 	return cfg, nil
 }

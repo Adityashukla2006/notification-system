@@ -107,6 +107,42 @@ func TestLoad(t *testing.T) {
 			env:     mergeEnv(requiredEnv(), map[string]string{"POSTGRES_PORT": "not-a-number"}),
 			wantErr: true,
 		},
+		{
+			name: "rate limit defaults keep the old 100/min average with a burst of 20",
+			env:  requiredEnv(),
+			check: func(t *testing.T, cfg Config) {
+				if cfg.RateLimit.Rate != 1.6667 {
+					t.Errorf("RateLimit.Rate = %v, want 1.6667", cfg.RateLimit.Rate)
+				}
+				if cfg.RateLimit.Burst != 20 {
+					t.Errorf("RateLimit.Burst = %d, want 20", cfg.RateLimit.Burst)
+				}
+			},
+		},
+		{
+			name: "rate limit overrides parsed",
+			env:  mergeEnv(requiredEnv(), map[string]string{"RATE_LIMIT_RATE": "100", "RATE_LIMIT_BURST": "50"}),
+			check: func(t *testing.T, cfg Config) {
+				if cfg.RateLimit.Rate != 100 || cfg.RateLimit.Burst != 50 {
+					t.Errorf("RateLimit = %+v, want rate 100 burst 50", cfg.RateLimit)
+				}
+			},
+		},
+		{
+			name:    "zero rate fails",
+			env:     mergeEnv(requiredEnv(), map[string]string{"RATE_LIMIT_RATE": "0"}),
+			wantErr: true,
+		},
+		{
+			name:    "negative rate fails",
+			env:     mergeEnv(requiredEnv(), map[string]string{"RATE_LIMIT_RATE": "-1"}),
+			wantErr: true,
+		},
+		{
+			name:    "zero burst fails",
+			env:     mergeEnv(requiredEnv(), map[string]string{"RATE_LIMIT_BURST": "0"}),
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -206,6 +242,7 @@ func allKnownKeys() []string {
 		"POSTGRES_HOST", "POSTGRES_PORT", "POSTGRES_USER", "POSTGRES_PASSWORD",
 		"POSTGRES_DBNAME", "POSTGRES_SSLMODE", "POSTGRES_MAX_CONNS",
 		"REDIS_ADDR", "REDIS_PASSWORD", "REDIS_DB",
+		"RATE_LIMIT_RATE", "RATE_LIMIT_BURST",
 	}
 }
 

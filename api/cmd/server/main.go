@@ -130,7 +130,7 @@ func run() error {
 	sch := queue.NewScheduler(rdb)
 	notifications := notification.New(st, q, sch, logger)
 
-	limiter := ratelimit.New(rdb, cfg.RateLimit.Requests, cfg.RateLimit.Window)
+	limiter := ratelimit.New(rdb, cfg.RateLimit.Rate, cfg.RateLimit.Burst)
 
 	handler := apihttp.Router(logger, pool, redisPinger{rdb}, st, notifications, st, limiter)
 
