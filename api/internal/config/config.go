@@ -50,6 +50,49 @@ type Config struct {
 	// Resend is the hosted email API. When its key is set it takes precedence
 	// over SMTP for the email channel.
 	Resend ResendConfig `envPrefix:"RESEND_"`
+
+	// ProviderSim replaces every channel's provider with a fault-injecting
+	// simulation. It exists for load testing only.
+	ProviderSim ProviderSimConfig `envPrefix:"PROVIDER_SIM_"`
+}
+
+// ProviderSimConfig configures the simulated provider used for benchmarks.
+//
+// It is opt-in and overrides Resend and SMTP when enabled, because a load test
+// that accidentally reaches a real provider sends real mail to real people at
+// thousands per second.
+type ProviderSimConfig struct {
+	// Enabled swaps every channel's provider for the simulation.
+	Enabled bool `env:"ENABLED" envDefault:"false"`
+
+	// Latency is the base duration of one simulated provider call.
+	Latency time.Duration `env:"LATENCY" envDefault:"0s"`
+
+	// Jitter widens Latency uniformly to [Latency-Jitter, Latency+Jitter].
+	Jitter time.Duration `env:"JITTER" envDefault:"0s"`
+
+	// FailRate is the probability, 0..1, that a call fails transiently and
+	// earns a retry.
+	FailRate float64 `env:"FAIL_RATE" envDefault:"0"`
+
+	// PermanentRate is the probability, 0..1, that a call fails permanently
+	// and is dead-lettered without retry.
+	PermanentRate float64 `env:"PERMANENT_RATE" envDefault:"0"`
+
+	// TimeoutRate is the probability, 0..1, that a call hangs until the
+	// worker's delivery timeout cancels it.
+	TimeoutRate float64 `env:"TIMEOUT_RATE" envDefault:"0"`
+
+	// OutageAfter and OutageFor describe a window, measured from process
+	// start, during which every call fails transiently. OutageFor of zero
+	// disables it.
+	OutageAfter time.Duration `env:"OUTAGE_AFTER" envDefault:"0s"`
+	OutageFor   time.Duration `env:"OUTAGE_FOR" envDefault:"0s"`
+
+	// Ledger counts every successful simulated send per notification in the
+	// Redis hash sim:sends, so a benchmark can detect duplicate deliveries that
+	// Postgres cannot see.
+	Ledger bool `env:"LEDGER" envDefault:"false"`
 }
 
 // ResendConfig configures the hosted Resend email API.
@@ -116,6 +159,12 @@ type WorkerConfig struct {
 	// the claims it left behind. Defaulting to the hostname is right for a
 	// StatefulSet pod and wrong for a randomly-named one, so it is overridable.
 	ID string `env:"ID" envDefault:""`
+
+	// Concurrency is how many delivery loops one worker process runs. Each
+	// loop is a full logical worker with its own processing list and liveness
+	// key, named "<ID>-<n>" when Concurrency > 1, so crash recovery is unchanged.
+	// It is also the hard upper bound on in-flight deliveries per process.
+	Concurrency int `env:"CONCURRENCY" envDefault:"1"`
 
 	// ClaimTimeout bounds how long a single blocking claim waits for work. It
 	// is also the worst-case delay before the worker notices a shutdown
