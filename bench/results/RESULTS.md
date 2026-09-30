@@ -99,9 +99,12 @@ Two application bugs were found, root-caused, and fixed (commit `bench-v1`).
 **Cause.** Every authenticated request ran
 `UPDATE api_keys SET last_used_at = now() WHERE id = $1`. All of a tenant's
 requests update the same row, and Postgres holds a row lock until the commit is
-flushed, so one tenant's requests went one durable commit at a time. Under load,
-28 of 38 active sessions were in that statement, 24 waiting on
-`Lock:transactionid`/`Lock:tuple`.
+flushed, so one tenant's requests went one durable commit at a time. In one
+`pg_stat_activity` sample taken at 1,000 req/s offered, 28 of 39 active sessions
+were in that statement and 24 were waiting on `Lock:transactionid`/`Lock:tuple`.
+(That sample was a live diagnostic query printed during the session and not
+saved to a file; the saved evidence for this bug is the 1-vs-4-tenant pilot
+below.)
 
 **Fix.** Write only when stale:
 `... AND (last_used_at IS NULL OR last_used_at < now() - interval '1 minute')`.
@@ -183,9 +186,11 @@ At 400 req/s: p50 15.2 ms, p95 23.7 ms, p99 45.7 ms, 0 errors.
 No request returned an error at any rate; overload shows up as latency and as
 requests k6 could not send (dropped iterations), not as 5xx.
 
-Why it saturates: at 600 req/s the API container used 1.65 of its 2 CPUs and
-Postgres sessions waited on `LWLock:WALWrite` — every accepted request is two
-durable commits (INSERT, and the `queued` transition).
+Why it saturates (diagnosis, not a saved measurement): a live `docker stats` /
+`pg_stat_activity` sample at 600 req/s, during the aborted no-warm-up run, showed
+the API container at 165% CPU (of its 2-CPU limit) and Postgres sessions waiting
+on `LWLock:WALWrite`. Every accepted request is two durable commits (INSERT, and
+the `queued` transition).
 
 #### Reconciling 770 req/s (pilot) with 400 req/s (test 1)
 
