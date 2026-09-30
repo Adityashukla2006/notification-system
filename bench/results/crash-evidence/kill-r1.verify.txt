@@ -1,0 +1,36 @@
+-- query: bench/sql/verify.sql
+== status counts (all rows) ==
+  status   | count 
+-----------+-------
+ delivered | 17994
+
+== accepted ids vs notifications (lost = accepted_without_row + not_terminal) ==
+ responses_202 | distinct_accepted_ids | accepted_without_row | delivered | dead_lettered | not_terminal 
+---------------+-----------------------+----------------------+-----------+---------------+--------------
+         17994 |                 17994 |                    0 |     17994 |             0 |            0
+
+== rows sharing one (client_id, idempotency_key) (must be 0) ==
+ duplicated_keys 
+-----------------
+               0
+
+== duplicate deliveries: provider ledger (ground truth) ==
+ ids_sent_at_least_once | ids_sent_more_than_once | extra_sends | sent_but_not_marked_delivered 
+------------------------+-------------------------+-------------+-------------------------------
+                  17994 |                       1 |           1 |                             0
+
+ delivered_without_ledger_send 
+-------------------------------
+                             0
+
+== every duplicated send, with its full attempt history (evidence for the cause) ==
+                  id                  | ledger_sends |  status   | attempt_number |  outcome  |   started    |   finished   
+--------------------------------------+--------------+-----------+----------------+-----------+--------------+--------------
+ 01a0f16e-f3b5-7d9a-96c1-4052e0b4ac0d |            2 | delivered |              1 | succeeded | 08:29:35.570 | 08:29:35.610
+ 01a0f16e-f3b5-7d9a-96c1-4052e0b4ac0d |            2 | delivered |              1 | succeeded | 08:29:45.087 | 08:29:45.144
+
+== duplicate deliveries visible to Postgres ==
+ ids_with_multiple_succeeded_attempts 
+--------------------------------------
+                                    1
+

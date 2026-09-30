@@ -1,0 +1,24 @@
+ Container notibench-k6-run-fd939735badd Creating 
+ Container notibench-k6-run-fd939735badd Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=992.39ms min=425.45ms med=987.13ms p(90)=1.15s p(95)=1.22s p(99)=1.44s max=1.6s 
+      { expected_response:true }...: avg=992.39ms min=425.45ms med=987.13ms p(90)=1.15s p(95)=1.22s p(99)=1.44s max=1.6s 
+    http_req_failed................: 0.00%  0 out of 25000
+    http_reqs......................: 25000  467.299064/s
+
+    EXECUTION
+    iteration_duration.............: avg=1.06s    min=454.53ms med=1.05s    p(90)=1.22s p(95)=1.25s p(99)=1.61s max=1.69s
+    iterations.....................: 5000   93.459813/s
+    vus............................: 100    min=100        max=100
+    vus_max........................: 100    min=100        max=100
+
+    NETWORK
+    data_received..................: 7.9 MB 148 kB/s
+    data_sent......................: 26 MB  489 kB/s
+
+
+

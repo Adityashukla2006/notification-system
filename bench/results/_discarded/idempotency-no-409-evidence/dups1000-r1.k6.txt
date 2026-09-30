@@ -1,0 +1,24 @@
+ Container notibench-k6-run-926e7411faa9 Creating 
+ Container notibench-k6-run-926e7411faa9 Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=825.61ms min=5.04ms  med=867.76ms p(90)=922.17ms p(95)=926.33ms p(99)=934.25ms max=940.69ms
+      { expected_response:true }...: avg=826.43ms min=527.3ms med=867.78ms p(90)=922.17ms p(95)=926.33ms p(99)=934.26ms max=940.69ms
+    http_req_failed................: 0.09%  1 out of 1001
+    http_reqs......................: 1001   50.041839/s
+
+    EXECUTION
+    iteration_duration.............: avg=17.85s   min=5.85ms  med=17.89s   p(90)=18s      p(95)=18.01s   p(99)=18.03s   max=18.03s  
+    iterations.....................: 1001   50.041839/s
+    vus............................: 0      min=0         max=1000
+    vus_max........................: 1001   min=1001      max=1001
+
+    NETWORK
+    data_received..................: 319 kB 16 kB/s
+    data_sent......................: 1.4 MB 71 kB/s
+
+
+

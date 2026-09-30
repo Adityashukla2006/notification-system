@@ -1,0 +1,94 @@
+2026-09-30T15:57:17 free_mb=2797 start burst 1..1
+
+[1m[15:57:37] burst: 50000 as fast as possible, 4 x 10, rep 1[0m
+ Container notibench-sampler Creating 
+ Container notibench-sampler Created 
+ Container notibench-k6-run-191128e96140 Creating 
+ Container notibench-k6-run-191128e96140 Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=224.11ms min=122.63ms med=211.87ms p(90)=276.75ms p(95)=304.13ms p(99)=492.89ms max=959.64ms
+      { expected_response:true }...: avg=224.11ms min=122.63ms med=211.87ms p(90)=276.75ms p(95)=304.13ms p(99)=492.89ms max=959.64ms
+    http_req_failed................: 0.00% 0 out of 50000
+    http_reqs......................: 50000 887.574664/s
+
+    EXECUTION
+    iteration_duration.............: avg=224.98ms min=123.15ms med=212.58ms p(90)=277.79ms p(95)=305.05ms p(99)=493.98ms max=1s      
+    iterations.....................: 50000 887.574664/s
+    vus............................: 200   min=200        max=200
+    vus_max........................: 200   min=200        max=200
+
+    NETWORK
+    data_received..................: 16 MB 280 kB/s
+    data_sent......................: 53 MB 933 kB/s
+
+
+
+-- query: bench/sql/verify.sql
+== status counts (all rows) ==
+  status   | count 
+-----------+-------
+ delivered | 50000
+
+== accepted ids vs notifications (lost = accepted_without_row + not_terminal) ==
+ responses_202 | distinct_accepted_ids | accepted_without_row | delivered | dead_lettered | not_terminal 
+---------------+-----------------------+----------------------+-----------+---------------+--------------
+         50000 |                 50000 |                    0 |     50000 |             0 |            0
+
+== rows sharing one (client_id, idempotency_key) (must be 0) ==
+ duplicated_keys 
+-----------------
+               0
+
+== duplicate deliveries: provider ledger (ground truth) ==
+ ids_sent_at_least_once | ids_sent_more_than_once | extra_sends | sent_but_not_marked_delivered 
+------------------------+-------------------------+-------------+-------------------------------
+                  50000 |                       0 |           0 |                             0
+
+ delivered_without_ledger_send 
+-------------------------------
+                             0
+
+== every duplicated send, with its full attempt history (evidence for the cause) ==
+ id | ledger_sends | status | attempt_number | outcome | started | finished 
+----+--------------+--------+----------------+---------+---------+----------
+
+== duplicate deliveries visible to Postgres ==
+ ids_with_multiple_succeeded_attempts 
+--------------------------------------
+                                    0
+
+-- query: bench/sql/latency.sql
+== e2e latency, delivered rows, ms ==
+   n   |   p50   |   p95   |   p99   |   max   
+-------+---------+---------+---------+---------
+ 50000 | 35704.5 | 50986.9 | 52321.9 | 52782.8
+
+== e2e latency by tenant, ms ==
+     tenant     |   n   |   p50   |   p95   |   p99   |   max   
+----------------+-------+---------+---------+---------+---------
+ bench-tenant-0 | 12500 | 35703.8 | 50987.1 | 52308.9 | 52782.8
+ bench-tenant-1 | 12500 | 35707.0 | 50985.1 | 52320.0 | 52778.8
+ bench-tenant-2 | 12500 | 35704.0 | 50986.9 | 52322.9 | 52761.6
+ bench-tenant-3 | 12500 | 35704.6 | 50986.1 | 52322.0 | 52763.6
+
+== provider call duration (delivery_attempts), ms ==
+ attempts | p50  | p99  
+----------+------+------
+    50000 | 51.6 | 76.6
+
+-- query: bench/sql/throughput.sql
+== throughput ==
+ total | delivered | window_s | delivered_per_s | drain_from_first_created_s | drain_after_last_created_s 
+-------+-----------+----------+-----------------+----------------------------+----------------------------
+ 50000 |     50000 |   108.45 |           461.0 |                     108.67 |                      52.77
+
+== delivered per 1s bucket ==
+ peak_1s | avg_1s_over_active_seconds 
+---------+----------------------------
+     574 |                      454.5
+
+2026-09-30T15:59:55 free_mb=2100 end burst 1..1 (exit 0)

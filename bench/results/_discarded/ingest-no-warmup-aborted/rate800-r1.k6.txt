@@ -1,0 +1,25 @@
+ Container notibench-k6-run-fcccb694a664 Creating 
+ Container notibench-k6-run-fcccb694a664 Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=970.24ms min=16.11ms med=792.39ms p(90)=2.08s p(95)=2.14s p(99)=2.34s max=2.47s
+      { expected_response:true }...: avg=970.24ms min=16.11ms med=792.39ms p(90)=2.08s p(95)=2.14s p(99)=2.34s max=2.47s
+    http_req_failed................: 0.00%  0 out of 16658
+    http_reqs......................: 16658  531.214375/s
+
+    EXECUTION
+    dropped_iterations.............: 7342   234.132305/s
+    iteration_duration.............: avg=971.73ms min=16.64ms med=795.17ms p(90)=2.08s p(95)=2.14s p(99)=2.34s max=2.47s
+    iterations.....................: 16658  531.214375/s
+    vus............................: 392    min=19         max=800
+    vus_max........................: 800    min=160        max=800
+
+    NETWORK
+    data_received..................: 5.3 MB 168 kB/s
+    data_sent......................: 18 MB  559 kB/s
+
+
+

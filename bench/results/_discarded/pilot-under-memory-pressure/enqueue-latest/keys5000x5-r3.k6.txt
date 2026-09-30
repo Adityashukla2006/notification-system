@@ -1,0 +1,24 @@
+ Container notibench-k6-run-2a6ed22d66d2 Creating 
+ Container notibench-k6-run-2a6ed22d66d2 Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=524.02ms min=60.92ms med=517.22ms p(90)=636ms    p(95)=682.25ms p(99)=760.4ms  max=836.77ms
+      { expected_response:true }...: avg=524.02ms min=60.92ms med=517.22ms p(90)=636ms    p(95)=682.25ms p(99)=760.4ms  max=836.77ms
+    http_req_failed................: 0.00%  0 out of 25000
+    http_reqs......................: 25000  866.251486/s
+
+    EXECUTION
+    iteration_duration.............: avg=574.54ms min=135.3ms med=566.84ms p(90)=683.37ms p(95)=730.35ms p(99)=784.55ms max=837.89ms
+    iterations.....................: 5000   173.250297/s
+    vus............................: 100    min=100        max=100
+    vus_max........................: 100    min=100        max=100
+
+    NETWORK
+    data_received..................: 7.9 MB 274 kB/s
+    data_sent......................: 26 MB  907 kB/s
+
+
+

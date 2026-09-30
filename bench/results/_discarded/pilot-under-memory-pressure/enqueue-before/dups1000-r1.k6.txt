@@ -1,0 +1,24 @@
+ Container notibench-k6-run-a50ad8c51fe0 Creating 
+ Container notibench-k6-run-a50ad8c51fe0 Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=6.75s  min=470.2ms  med=6.76s  p(90)=6.85s  p(95)=6.87s  p(99)=6.89s  max=6.91s 
+      { expected_response:true }...: avg=6.75s  min=6.38s    med=6.76s  p(90)=6.85s  p(95)=6.87s  p(99)=6.89s  max=6.91s 
+    http_req_failed................: 0.09%  1 out of 1001
+    http_reqs......................: 1001   48.902944/s
+
+    EXECUTION
+    iteration_duration.............: avg=20.28s min=472.49ms med=20.31s p(90)=20.42s p(95)=20.43s p(99)=20.45s max=20.46s
+    iterations.....................: 1001   48.902944/s
+    vus............................: 887    min=887       max=1000
+    vus_max........................: 1001   min=1001      max=1001
+
+    NETWORK
+    data_received..................: 316 kB 16 kB/s
+    data_sent......................: 1.4 MB 70 kB/s
+
+
+

@@ -1,0 +1,263 @@
+2026-09-30T14:15:55 free_mb=1241 start idempotency 1..3
+
+[1m[14:16:14] idempotency: 1000 concurrent duplicates, rep 1[0m
+ Container notibench-k6-run-9ea13dee2ef0 Creating 
+ Container notibench-k6-run-9ea13dee2ef0 Created 
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 1       0.049967/s
+    checks_succeeded...: 100.00% 1 out of 1
+    checks_failed......: 0.00%   0 out of 1
+
+    ✓ changed body on reused key is 409
+
+    HTTP
+    http_req_duration..............: avg=627.13ms min=6.83ms   med=651.73ms p(90)=733.98ms p(95)=739.91ms p(99)=743.6ms max=751.11ms
+      { expected_response:true }...: avg=627.75ms min=385.88ms med=651.79ms p(90)=733.99ms p(95)=739.92ms p(99)=743.6ms max=751.11ms
+    http_req_failed................: 0.09%  1 out of 1001
+    http_reqs......................: 1001   50.017151/s
+
+    EXECUTION
+    iteration_duration.............: avg=17.23s   min=11.49ms  med=17.27s   p(90)=17.36s   p(95)=17.42s   p(99)=17.43s  max=17.44s  
+    iterations.....................: 1001   50.017151/s
+    vus............................: 0      min=0         max=1000
+    vus_max........................: 1001   min=1001      max=1001
+
+    NETWORK
+    data_received..................: 318 kB 16 kB/s
+    data_sent......................: 1.4 MB 71 kB/s
+
+
+
+-- query: bench/sql/idempotency.sql
+== rows per idempotency key (must be exactly 1) ==
+       idempotency_key       | rows |                  id                  |  status   
+-----------------------------+------+--------------------------------------+-----------
+ dups1000-r1-1790757974-idem |    1 | 01a0f17e-7f78-7d9d-9ef8-4fa56fa04397 | delivered
+
+== total rows in notifications ==
+ total_rows 
+------------
+          1
+
+== ids returned in 202 responses ==
+ responses_202 | distinct_ids 
+---------------+--------------
+          1000 |            1
+
+== delivery attempts and provider-ledger sends for that row ==
+ attempts | ledger_sends 
+----------+--------------
+        1 |            1
+
+-- query: bench/sql/verify.sql
+== status counts (all rows) ==
+  status   | count 
+-----------+-------
+ delivered |     1
+
+== accepted ids vs notifications (lost = accepted_without_row + not_terminal) ==
+ responses_202 | distinct_accepted_ids | accepted_without_row | delivered | dead_lettered | not_terminal 
+---------------+-----------------------+----------------------+-----------+---------------+--------------
+          1000 |                     1 |                    0 |         1 |             0 |            0
+
+== rows sharing one (client_id, idempotency_key) (must be 0) ==
+ duplicated_keys 
+-----------------
+               0
+
+== duplicate deliveries: provider ledger (ground truth) ==
+ ids_sent_at_least_once | ids_sent_more_than_once | extra_sends | sent_but_not_marked_delivered 
+------------------------+-------------------------+-------------+-------------------------------
+                      1 |                       0 |           0 |                             0
+
+ delivered_without_ledger_send 
+-------------------------------
+                             0
+
+== every duplicated send, with its full attempt history (evidence for the cause) ==
+ id | ledger_sends | status | attempt_number | outcome | started | finished 
+----+--------------+--------+----------------+---------+---------+----------
+
+== duplicate deliveries visible to Postgres ==
+ ids_with_multiple_succeeded_attempts 
+--------------------------------------
+                                    0
+
+
+[1m[14:16:59] idempotency: 1000 concurrent duplicates, rep 2[0m
+ Container notibench-k6-run-89e1e0c88d6a Creating 
+ Container notibench-k6-run-89e1e0c88d6a Created 
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 1       0.04998/s
+    checks_succeeded...: 100.00% 1 out of 1
+    checks_failed......: 0.00%   0 out of 1
+
+    ✓ changed body on reused key is 409
+
+    HTTP
+    http_req_duration..............: avg=432.31ms min=7.44ms   med=451.62ms p(90)=527.57ms p(95)=533.52ms p(99)=540ms    max=557.31ms
+      { expected_response:true }...: avg=432.73ms min=189.17ms med=451.74ms p(90)=527.57ms p(95)=533.52ms p(99)=540.01ms max=557.31ms
+    http_req_failed................: 0.09%  1 out of 1001
+    http_reqs......................: 1001   50.029675/s
+
+    EXECUTION
+    iteration_duration.............: avg=16.66s   min=9.64ms   med=16.7s    p(90)=16.78s   p(95)=16.8s    p(99)=16.86s   max=16.88s  
+    iterations.....................: 1001   50.029675/s
+    vus............................: 0      min=0         max=1000
+    vus_max........................: 1001   min=1001      max=1001
+
+    NETWORK
+    data_received..................: 319 kB 16 kB/s
+    data_sent......................: 1.4 MB 71 kB/s
+
+
+
+-- query: bench/sql/idempotency.sql
+== rows per idempotency key (must be exactly 1) ==
+       idempotency_key       | rows |                  id                  |  status   
+-----------------------------+------+--------------------------------------+-----------
+ dups1000-r2-1790758019-idem |    1 | 01a0f17f-2e5a-7a69-9fd5-241a056a600a | delivered
+
+== total rows in notifications ==
+ total_rows 
+------------
+          1
+
+== ids returned in 202 responses ==
+ responses_202 | distinct_ids 
+---------------+--------------
+          1000 |            1
+
+== delivery attempts and provider-ledger sends for that row ==
+ attempts | ledger_sends 
+----------+--------------
+        1 |            1
+
+-- query: bench/sql/verify.sql
+== status counts (all rows) ==
+  status   | count 
+-----------+-------
+ delivered |     1
+
+== accepted ids vs notifications (lost = accepted_without_row + not_terminal) ==
+ responses_202 | distinct_accepted_ids | accepted_without_row | delivered | dead_lettered | not_terminal 
+---------------+-----------------------+----------------------+-----------+---------------+--------------
+          1000 |                     1 |                    0 |         1 |             0 |            0
+
+== rows sharing one (client_id, idempotency_key) (must be 0) ==
+ duplicated_keys 
+-----------------
+               0
+
+== duplicate deliveries: provider ledger (ground truth) ==
+ ids_sent_at_least_once | ids_sent_more_than_once | extra_sends | sent_but_not_marked_delivered 
+------------------------+-------------------------+-------------+-------------------------------
+                      1 |                       0 |           0 |                             0
+
+ delivered_without_ledger_send 
+-------------------------------
+                             0
+
+== every duplicated send, with its full attempt history (evidence for the cause) ==
+ id | ledger_sends | status | attempt_number | outcome | started | finished 
+----+--------------+--------+----------------+---------+---------+----------
+
+== duplicate deliveries visible to Postgres ==
+ ids_with_multiple_succeeded_attempts 
+--------------------------------------
+                                    0
+
+
+[1m[14:17:45] idempotency: 1000 concurrent duplicates, rep 3[0m
+ Container notibench-k6-run-3906cf27747f Creating 
+ Container notibench-k6-run-3906cf27747f Created 
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 1       0.049991/s
+    checks_succeeded...: 100.00% 1 out of 1
+    checks_failed......: 0.00%   0 out of 1
+
+    ✓ changed body on reused key is 409
+
+    HTTP
+    http_req_duration..............: avg=478.95ms min=4.37ms   med=507.76ms p(90)=582.54ms p(95)=587.78ms p(99)=605.03ms max=607.19ms
+      { expected_response:true }...: avg=479.43ms min=201.14ms med=508.1ms  p(90)=582.54ms p(95)=587.78ms p(99)=605.03ms max=607.19ms
+    http_req_failed................: 0.09%  1 out of 1001
+    http_reqs......................: 1001   50.040675/s
+
+    EXECUTION
+    iteration_duration.............: avg=16.75s   min=5.7ms    med=16.79s   p(90)=16.88s   p(95)=16.88s   p(99)=16.89s   max=16.9s   
+    iterations.....................: 1001   50.040675/s
+    vus............................: 0      min=0         max=1000
+    vus_max........................: 1001   min=1001      max=1001
+
+    NETWORK
+    data_received..................: 318 kB 16 kB/s
+    data_sent......................: 1.4 MB 71 kB/s
+
+
+
+-- query: bench/sql/idempotency.sql
+== rows per idempotency key (must be exactly 1) ==
+       idempotency_key       | rows |                  id                  |  status   
+-----------------------------+------+--------------------------------------+-----------
+ dups1000-r3-1790758065-idem |    1 | 01a0f17f-e253-7765-8efc-bba2fc3afe64 | delivered
+
+== total rows in notifications ==
+ total_rows 
+------------
+          1
+
+== ids returned in 202 responses ==
+ responses_202 | distinct_ids 
+---------------+--------------
+          1000 |            1
+
+== delivery attempts and provider-ledger sends for that row ==
+ attempts | ledger_sends 
+----------+--------------
+        1 |            1
+
+-- query: bench/sql/verify.sql
+== status counts (all rows) ==
+  status   | count 
+-----------+-------
+ delivered |     1
+
+== accepted ids vs notifications (lost = accepted_without_row + not_terminal) ==
+ responses_202 | distinct_accepted_ids | accepted_without_row | delivered | dead_lettered | not_terminal 
+---------------+-----------------------+----------------------+-----------+---------------+--------------
+          1000 |                     1 |                    0 |         1 |             0 |            0
+
+== rows sharing one (client_id, idempotency_key) (must be 0) ==
+ duplicated_keys 
+-----------------
+               0
+
+== duplicate deliveries: provider ledger (ground truth) ==
+ ids_sent_at_least_once | ids_sent_more_than_once | extra_sends | sent_but_not_marked_delivered 
+------------------------+-------------------------+-------------+-------------------------------
+                      1 |                       0 |           0 |                             0
+
+ delivered_without_ledger_send 
+-------------------------------
+                             0
+
+== every duplicated send, with its full attempt history (evidence for the cause) ==
+ id | ledger_sends | status | attempt_number | outcome | started | finished 
+----+--------------+--------+----------------+---------+---------+----------
+
+== duplicate deliveries visible to Postgres ==
+ ids_with_multiple_succeeded_attempts 
+--------------------------------------
+                                    0
+
+2026-09-30T14:18:21 free_mb=1305 end idempotency 1..3 (exit 0)

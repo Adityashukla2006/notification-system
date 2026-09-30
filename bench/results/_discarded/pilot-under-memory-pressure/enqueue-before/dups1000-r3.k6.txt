@@ -1,0 +1,24 @@
+ Container notibench-k6-run-84a17d6053ed Creating 
+ Container notibench-k6-run-84a17d6053ed Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=4.88s  min=114.03ms med=4.92s  p(90)=5.06s  p(95)=5.08s  p(99)=5.13s  max=5.16s
+      { expected_response:true }...: avg=4.89s  min=114.03ms med=4.92s  p(90)=5.06s  p(95)=5.08s  p(99)=5.13s  max=5.16s
+    http_req_failed................: 0.09%  1 out of 1001
+    http_reqs......................: 1001   47.196188/s
+
+    EXECUTION
+    iteration_duration.............: avg=20.87s min=1.21s    med=20.92s p(90)=21.11s p(95)=21.14s p(99)=21.18s max=21.2s
+    iterations.....................: 1001   47.196188/s
+    vus............................: 258    min=258       max=1000
+    vus_max........................: 1001   min=1001      max=1001
+
+    NETWORK
+    data_received..................: 316 kB 15 kB/s
+    data_sent......................: 1.4 MB 67 kB/s
+
+
+

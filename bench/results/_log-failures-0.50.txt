@@ -1,0 +1,398 @@
+2026-09-30T13:44:30 free_mb=1479 start failures 1..3
+
+[1m[13:44:51] failures: fail rate 0.50, 200/s for 25s, rep 1[0m
+ Container notibench-k6-run-21d666ddbbe1 Creating 
+ Container notibench-k6-run-21d666ddbbe1 Created 
+
+
+  █ THRESHOLDS 
+
+    dropped_iterations{scenario:load}
+    ✓ 'count>=0' count=14
+
+    http_req_duration{scenario:load}
+    ✓ 'max>=0' max=489.32ms
+
+    http_req_failed{scenario:load}
+    ✓ 'rate>=0' rate=0.00%
+
+    http_reqs{scenario:load}
+    ✓ 'count>=0' count=4986
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=25.43ms min=9.6ms   med=18.22ms p(90)=30.58ms p(95)=52.15ms p(99)=222.15ms max=489.32ms
+      { expected_response:true }...: avg=25.43ms min=9.6ms   med=18.22ms p(90)=30.58ms p(95)=52.15ms p(99)=222.15ms max=489.32ms
+      { scenario:load }............: avg=25.43ms min=9.6ms   med=18.22ms p(90)=30.58ms p(95)=52.15ms p(99)=222.15ms max=489.32ms
+    http_req_failed................: 0.00%  0 out of 4986
+      { scenario:load }............: 0.00%  0 out of 4986
+    http_reqs......................: 4986   199.204587/s
+      { scenario:load }............: 4986   199.204587/s
+
+    EXECUTION
+    dropped_iterations.............: 14     0.559339/s
+      { scenario:load }............: 14     0.559339/s
+    iteration_duration.............: avg=26.21ms min=10.02ms med=18.93ms p(90)=31.54ms p(95)=53.39ms p(99)=223.83ms max=492.01ms
+    iterations.....................: 4986   199.204587/s
+    vus............................: 5      min=3         max=7 
+    vus_max........................: 62     min=62        max=62
+
+    NETWORK
+    data_received..................: 1.6 MB 63 kB/s
+    data_sent......................: 5.2 MB 210 kB/s
+
+
+
+-- query: bench/sql/verify.sql
+== status counts (all rows) ==
+    status     | count 
+---------------+-------
+ dead_lettered |   161
+ delivered     |  4825
+
+== accepted ids vs notifications (lost = accepted_without_row + not_terminal) ==
+ responses_202 | distinct_accepted_ids | accepted_without_row | delivered | dead_lettered | not_terminal 
+---------------+-----------------------+----------------------+-----------+---------------+--------------
+          4986 |                  4986 |                    0 |      4825 |           161 |            0
+
+== rows sharing one (client_id, idempotency_key) (must be 0) ==
+ duplicated_keys 
+-----------------
+               0
+
+== duplicate deliveries: provider ledger (ground truth) ==
+ ids_sent_at_least_once | ids_sent_more_than_once | extra_sends | sent_but_not_marked_delivered 
+------------------------+-------------------------+-------------+-------------------------------
+                   4825 |                       0 |           0 |                             0
+
+ delivered_without_ledger_send 
+-------------------------------
+                             0
+
+== duplicate deliveries visible to Postgres ==
+ ids_with_multiple_succeeded_attempts 
+--------------------------------------
+                                    0
+
+-- query: bench/sql/latency.sql
+== e2e latency, delivered rows, ms ==
+  n   |  p50  |  p95   |   p99   |   max   
+------+-------+--------+---------+---------
+ 4825 | 814.1 | 6479.0 | 13326.3 | 15280.9
+
+== e2e latency by tenant, ms ==
+     tenant     |  n   |  p50  |  p95   |   p99   |   max   
+----------------+------+-------+--------+---------+---------
+ bench-tenant-0 | 1206 | 200.7 | 6154.2 | 13113.5 | 15280.9
+ bench-tenant-1 | 1198 | 859.2 | 6494.1 | 13484.9 | 15017.3
+ bench-tenant-2 | 1222 | 881.6 | 6705.5 | 12429.0 | 14388.1
+ bench-tenant-3 | 1199 | 238.9 | 6696.5 | 13959.8 | 14708.4
+
+== provider call duration (delivery_attempts), ms ==
+ attempts | p50  | p99  
+----------+------+------
+     9771 | 51.5 | 75.7
+
+-- query: bench/sql/throughput.sql
+== throughput ==
+ total | delivered | window_s | delivered_per_s | drain_from_first_created_s | drain_after_last_created_s 
+-------+-----------+----------+-----------------+----------------------------+----------------------------
+  4986 |      4825 |    39.63 |           121.8 |                      39.70 |                      14.73
+
+== delivered per 1s bucket ==
+ peak_1s | avg_1s_over_active_seconds 
+---------+----------------------------
+     209 |                      120.6
+
+-- query: bench/sql/failures.sql
+== outcome of every notification ==
+ total | delivered | dead_lettered | not_terminal | pct_delivered | pct_dead_lettered 
+-------+-----------+---------------+--------------+---------------+-------------------
+  4986 |      4825 |           161 |            0 |        96.771 |             3.229
+
+== attempts ==
+ attempts | failed_attempts | observed_fail_pct 
+----------+-----------------+-------------------
+     9771 |            4946 |             50.62
+
+== delivered notifications by attempts needed ==
+ n_attempts | count 
+------------+-------
+          1 |  2399
+          2 |  1333
+          3 |   625
+          4 |   314
+          5 |   154
+
+== dead-lettered rows by attempts recorded ==
+ attempts | max_attempts | count 
+----------+--------------+-------
+        5 |            5 |   161
+
+
+[1m[13:46:02] failures: fail rate 0.50, 200/s for 25s, rep 2[0m
+ Container notibench-k6-run-9fb48438b30d Creating 
+ Container notibench-k6-run-9fb48438b30d Created 
+
+
+  █ THRESHOLDS 
+
+    dropped_iterations{scenario:load}
+    ✓ 'count>=0' count=0
+
+    http_req_duration{scenario:load}
+    ✓ 'max>=0' max=155.56ms
+
+    http_req_failed{scenario:load}
+    ✓ 'rate>=0' rate=0.00%
+
+    http_reqs{scenario:load}
+    ✓ 'count>=0' count=5001
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=20.72ms min=8.72ms med=18.05ms p(90)=26.75ms p(95)=37.29ms p(99)=76ms    max=155.56ms
+      { expected_response:true }...: avg=20.72ms min=8.72ms med=18.05ms p(90)=26.75ms p(95)=37.29ms p(99)=76ms    max=155.56ms
+      { scenario:load }............: avg=20.72ms min=8.72ms med=18.05ms p(90)=26.75ms p(95)=37.29ms p(99)=76ms    max=155.56ms
+    http_req_failed................: 0.00%  0 out of 5001
+      { scenario:load }............: 0.00%  0 out of 5001
+    http_reqs......................: 5001   199.942115/s
+      { scenario:load }............: 5001   199.942115/s
+
+    EXECUTION
+    dropped_iterations.............: 0      0/s
+      { scenario:load }............: 0      0/s
+    iteration_duration.............: avg=21.43ms min=9.02ms med=18.72ms p(90)=27.65ms p(95)=38.16ms p(99)=77.47ms max=156.74ms
+    iterations.....................: 5001   199.942115/s
+    vus............................: 4      min=2         max=4 
+    vus_max........................: 50     min=50        max=50
+
+    NETWORK
+    data_received..................: 1.6 MB 63 kB/s
+    data_sent......................: 5.3 MB 210 kB/s
+
+
+
+-- query: bench/sql/verify.sql
+== status counts (all rows) ==
+    status     | count 
+---------------+-------
+ dead_lettered |   152
+ delivered     |  4849
+
+== accepted ids vs notifications (lost = accepted_without_row + not_terminal) ==
+ responses_202 | distinct_accepted_ids | accepted_without_row | delivered | dead_lettered | not_terminal 
+---------------+-----------------------+----------------------+-----------+---------------+--------------
+          5001 |                  5001 |                    0 |      4849 |           152 |            0
+
+== rows sharing one (client_id, idempotency_key) (must be 0) ==
+ duplicated_keys 
+-----------------
+               0
+
+== duplicate deliveries: provider ledger (ground truth) ==
+ ids_sent_at_least_once | ids_sent_more_than_once | extra_sends | sent_but_not_marked_delivered 
+------------------------+-------------------------+-------------+-------------------------------
+                   4849 |                       0 |           0 |                             0
+
+ delivered_without_ledger_send 
+-------------------------------
+                             0
+
+== duplicate deliveries visible to Postgres ==
+ ids_with_multiple_succeeded_attempts 
+--------------------------------------
+                                    0
+
+-- query: bench/sql/latency.sql
+== e2e latency, delivered rows, ms ==
+  n   |  p50  |  p95   |   p99   |   max   
+------+-------+--------+---------+---------
+ 4849 | 181.8 | 6384.3 | 13130.0 | 15085.0
+
+== e2e latency by tenant, ms ==
+     tenant     |  n   |  p50  |  p95   |   p99   |   max   
+----------------+------+-------+--------+---------+---------
+ bench-tenant-0 | 1225 | 169.1 | 6317.2 | 12750.4 | 14688.8
+ bench-tenant-1 | 1210 | 838.0 | 6510.1 | 12910.1 | 14829.0
+ bench-tenant-2 | 1203 | 184.9 | 6474.2 | 13254.4 | 15085.0
+ bench-tenant-3 | 1211 | 155.9 | 6206.9 | 12974.9 | 14987.5
+
+== provider call duration (delivery_attempts), ms ==
+ attempts | p50  | p99  
+----------+------+------
+     9702 | 50.8 | 75.6
+
+-- query: bench/sql/throughput.sql
+== throughput ==
+ total | delivered | window_s | delivered_per_s | drain_from_first_created_s | drain_after_last_created_s 
+-------+-----------+----------+-----------------+----------------------------+----------------------------
+  5001 |      4849 |    38.03 |           127.5 |                      38.08 |                      13.09
+
+== delivered per 1s bucket ==
+ peak_1s | avg_1s_over_active_seconds 
+---------+----------------------------
+     219 |                      124.3
+
+-- query: bench/sql/failures.sql
+== outcome of every notification ==
+ total | delivered | dead_lettered | not_terminal | pct_delivered | pct_dead_lettered 
+-------+-----------+---------------+--------------+---------------+-------------------
+  5001 |      4849 |           152 |            0 |        96.961 |             3.039
+
+== attempts ==
+ attempts | failed_attempts | observed_fail_pct 
+----------+-----------------+-------------------
+     9702 |            4853 |             50.02
+
+== delivered notifications by attempts needed ==
+ n_attempts | count 
+------------+-------
+          1 |  2479
+          2 |  1251
+          3 |   664
+          4 |   306
+          5 |   149
+
+== dead-lettered rows by attempts recorded ==
+ attempts | max_attempts | count 
+----------+--------------+-------
+        5 |            5 |   152
+
+
+[1m[13:47:11] failures: fail rate 0.50, 200/s for 25s, rep 3[0m
+ Container notibench-k6-run-552f4c448841 Creating 
+ Container notibench-k6-run-552f4c448841 Created 
+
+
+  █ THRESHOLDS 
+
+    dropped_iterations{scenario:load}
+    ✓ 'count>=0' count=0
+
+    http_req_duration{scenario:load}
+    ✓ 'max>=0' max=119.92ms
+
+    http_req_failed{scenario:load}
+    ✓ 'rate>=0' rate=0.00%
+
+    http_reqs{scenario:load}
+    ✓ 'count>=0' count=5001
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=20.11ms min=9.87ms  med=17.7ms  p(90)=24.96ms p(95)=34.44ms p(99)=70.79ms max=119.92ms
+      { expected_response:true }...: avg=20.11ms min=9.87ms  med=17.7ms  p(90)=24.96ms p(95)=34.44ms p(99)=70.79ms max=119.92ms
+      { scenario:load }............: avg=20.11ms min=9.87ms  med=17.7ms  p(90)=24.96ms p(95)=34.44ms p(99)=70.79ms max=119.92ms
+    http_req_failed................: 0.00%  0 out of 5001
+      { scenario:load }............: 0.00%  0 out of 5001
+    http_reqs......................: 5001   199.91233/s
+      { scenario:load }............: 5001   199.91233/s
+
+    EXECUTION
+    dropped_iterations.............: 0      0/s
+      { scenario:load }............: 0      0/s
+    iteration_duration.............: avg=20.81ms min=10.23ms med=18.36ms p(90)=26.08ms p(95)=35.64ms p(99)=72.59ms max=130.99ms
+    iterations.....................: 5001   199.91233/s
+    vus............................: 2      min=2         max=15
+    vus_max........................: 50     min=50        max=50
+
+    NETWORK
+    data_received..................: 1.6 MB 63 kB/s
+    data_sent......................: 5.3 MB 210 kB/s
+
+
+
+-- query: bench/sql/verify.sql
+== status counts (all rows) ==
+    status     | count 
+---------------+-------
+ dead_lettered |   145
+ delivered     |  4856
+
+== accepted ids vs notifications (lost = accepted_without_row + not_terminal) ==
+ responses_202 | distinct_accepted_ids | accepted_without_row | delivered | dead_lettered | not_terminal 
+---------------+-----------------------+----------------------+-----------+---------------+--------------
+          5001 |                  5001 |                    0 |      4856 |           145 |            0
+
+== rows sharing one (client_id, idempotency_key) (must be 0) ==
+ duplicated_keys 
+-----------------
+               0
+
+== duplicate deliveries: provider ledger (ground truth) ==
+ ids_sent_at_least_once | ids_sent_more_than_once | extra_sends | sent_but_not_marked_delivered 
+------------------------+-------------------------+-------------+-------------------------------
+                   4856 |                       0 |           0 |                             0
+
+ delivered_without_ledger_send 
+-------------------------------
+                             0
+
+== duplicate deliveries visible to Postgres ==
+ ids_with_multiple_succeeded_attempts 
+--------------------------------------
+                                    0
+
+-- query: bench/sql/latency.sql
+== e2e latency, delivered rows, ms ==
+  n   |  p50  |  p95   |   p99   |   max   
+------+-------+--------+---------+---------
+ 4856 | 179.0 | 6568.8 | 13227.8 | 15483.9
+
+== e2e latency by tenant, ms ==
+     tenant     |  n   |  p50  |  p95   |   p99   |   max   
+----------------+------+-------+--------+---------+---------
+ bench-tenant-0 | 1213 | 185.7 | 6644.3 | 13510.3 | 14969.7
+ bench-tenant-1 | 1218 | 205.2 | 6540.2 | 13345.8 | 15483.9
+ bench-tenant-2 | 1203 | 172.4 | 6488.8 | 13263.1 | 14872.6
+ bench-tenant-3 | 1222 | 170.6 | 6584.9 | 12669.1 | 14647.8
+
+== provider call duration (delivery_attempts), ms ==
+ attempts | p50  | p99  
+----------+------+------
+     9626 | 50.8 | 75.8
+
+-- query: bench/sql/throughput.sql
+== throughput ==
+ total | delivered | window_s | delivered_per_s | drain_from_first_created_s | drain_after_last_created_s 
+-------+-----------+----------+-----------------+----------------------------+----------------------------
+  5001 |      4856 |    38.77 |           125.2 |                      38.82 |                      13.82
+
+== delivered per 1s bucket ==
+ peak_1s | avg_1s_over_active_seconds 
+---------+----------------------------
+     209 |                      124.5
+
+-- query: bench/sql/failures.sql
+== outcome of every notification ==
+ total | delivered | dead_lettered | not_terminal | pct_delivered | pct_dead_lettered 
+-------+-----------+---------------+--------------+---------------+-------------------
+  5001 |      4856 |           145 |            0 |        97.101 |             2.899
+
+== attempts ==
+ attempts | failed_attempts | observed_fail_pct 
+----------+-----------------+-------------------
+     9626 |            4770 |             49.55
+
+== delivered notifications by attempts needed ==
+ n_attempts | count 
+------------+-------
+          1 |  2498
+          2 |  1294
+          3 |   604
+          4 |   297
+          5 |   163
+
+== dead-lettered rows by attempts recorded ==
+ attempts | max_attempts | count 
+----------+--------------+-------
+        5 |            5 |   145
+
+2026-09-30T13:48:10 free_mb=1397 end failures 1..3 (exit 0)

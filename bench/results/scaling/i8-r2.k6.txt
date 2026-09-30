@@ -1,0 +1,24 @@
+ Container notibench-k6-run-66499b3342bc Creating 
+ Container notibench-k6-run-66499b3342bc Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=82.47ms min=43.75ms med=78.24ms p(90)=107.86ms p(95)=120.1ms  p(99)=157.25ms max=221.57ms
+      { expected_response:true }...: avg=82.47ms min=43.75ms med=78.24ms p(90)=107.86ms p(95)=120.1ms  p(99)=157.25ms max=221.57ms
+    http_req_failed................: 0.00%  0 out of 20000
+    http_reqs......................: 20000  1198.497258/s
+
+    EXECUTION
+    iteration_duration.............: avg=83.23ms min=44.5ms  med=78.97ms p(90)=108.96ms p(95)=121.29ms p(99)=158.4ms  max=222.04ms
+    iterations.....................: 20000  1198.497258/s
+    vus............................: 100    min=100        max=100
+    vus_max........................: 100    min=100        max=100
+
+    NETWORK
+    data_received..................: 6.3 MB 379 kB/s
+    data_sent......................: 21 MB  1.3 MB/s
+
+
+

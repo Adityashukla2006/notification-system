@@ -1,0 +1,25 @@
+ Container notibench-k6-run-c81e3a55b5ae Creating 
+ Container notibench-k6-run-c81e3a55b5ae Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=1.97s min=35.59ms med=2.21s p(90)=2.61s p(95)=2.68s p(99)=2.77s max=3s
+      { expected_response:true }...: avg=1.97s min=35.59ms med=2.21s p(90)=2.61s p(95)=2.68s p(99)=2.77s max=3s
+    http_req_failed................: 0.00%  0 out of 6786
+    http_reqs......................: 6786   417.276315/s
+
+    EXECUTION
+    dropped_iterations.............: 8215   505.146614/s
+    iteration_duration.............: avg=1.97s min=37.96ms med=2.22s p(90)=2.62s p(95)=2.69s p(99)=2.78s max=3s
+    iterations.....................: 6786   417.276315/s
+    vus............................: 629    min=285       max=1000
+    vus_max........................: 1000   min=286       max=1000
+
+    NETWORK
+    data_received..................: 2.1 MB 132 kB/s
+    data_sent......................: 7.1 MB 436 kB/s
+
+
+

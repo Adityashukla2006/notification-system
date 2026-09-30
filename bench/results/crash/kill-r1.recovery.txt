@@ -1,0 +1,18 @@
+-- worker killed: notibench-worker-1 (worker id prefix e9c1b4e7e2b4)
+-- psql time just before docker kill (lower bound): 2026-09-30 08:36:47.267535+00
+-- process died (docker State.FinishedAt): 2026-09-30T08:36:49.032594713Z
+-- process restarted (docker State.StartedAt): 2026-09-30T08:36:56.17159048Z
+-- in-flight claims at kill: 6
+-- query: fate of every in-flight id, and recovery time (kill -> last of them delivered)
+ inflight_ids | delivered | not_delivered | recovery_s_from_kill | recovery_s_from_restart 
+--------------+-----------+---------------+----------------------+-------------------------
+            6 |         6 |             0 |                 7.83 |                    0.69
+(1 row)
+
+-- worker-1 recovery log lines
+{"time":"2026-09-30T08:36:56.690919368Z","level":"INFO","msg":"recovered claims from a previous run","worker_id":"e9c1b4e7e2b4-1","count":1}
+{"time":"2026-09-30T08:36:56.691637768Z","level":"INFO","msg":"recovered claims from a previous run","worker_id":"e9c1b4e7e2b4-6","count":1}
+{"time":"2026-09-30T08:36:56.69190717Z","level":"INFO","msg":"recovered claims from a previous run","worker_id":"e9c1b4e7e2b4-8","count":1}
+{"time":"2026-09-30T08:36:56.692254228Z","level":"INFO","msg":"recovered claims from a previous run","worker_id":"e9c1b4e7e2b4-9","count":1}
+{"time":"2026-09-30T08:36:56.69260608Z","level":"INFO","msg":"recovered claims from a previous run","worker_id":"e9c1b4e7e2b4-2","count":1}
+{"time":"2026-09-30T08:36:56.692935478Z","level":"INFO","msg":"recovered claims from a previous run","worker_id":"e9c1b4e7e2b4-0","count":1}

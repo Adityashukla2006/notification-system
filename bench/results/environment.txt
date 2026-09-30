@@ -1,0 +1,41 @@
+captured: 2026-09-30T07:17:31Z
+== host ==
+cpu: 12th Gen Intel(R) Core(TM) i5-1240P | cores 12 | threads 16
+ram_bytes: 16849293312
+os: Microsoft Windows 11 Home Single Language 10.0.26200
+== docker ==
+docker server 29.6.1
+docker vm: 16 CPUs, 8162312192 bytes, Docker Desktop, kernel 6.6.87.2-microsoft-standard-WSL2
+== versions ==
+go (build image): FROM golang:1.25-alpine AS build
+go (module): go 1.25.5
+postgres (PostgreSQL) 17.11
+Redis server v=7.4.11 sha=00000000:0 malloc=jemalloc-5.3.0 bits=64 build=40ff01a501d8e4b6
+k6 v1.3.0+dirty (commit/5870e99ae8-dirty, go1.25.1, linux/amd64)
+== container limits (docker compose config) ==
+  api: cpus=2 mem=536870912
+  bench: cpus=2 mem=1073741824
+  k6: cpus=4 mem=2147483648
+  mailpit: cpus=1 mem=1073741824
+  migrate: cpus=None mem=None
+  postgres: cpus=4 mem=2147483648
+  redis: cpus=1 mem=536870912
+  sampler: cpus=0.25 mem=67108864
+  worker: cpus=1 mem=536870912
+== postgres settings ==
+fsync=on
+max_connections=300
+max_wal_size=1GB
+shared_buffers=128MB
+synchronous_commit=on
+wal_level=replica
+work_mem=4MB
+== redis settings ==
+appendonly	no
+save	3600 1 300 100 60 10000
+maxmemory	0
+== app settings (bench/docker-compose.yml) ==
+  api: POSTGRES_MAX_CONNS=40, rate limit lifted (100000000/min) except in the fairness test
+  worker: WORKER_CONCURRENCY per test (default 10 slots/instance), POSTGRES_MAX_CONNS=slots+5, CLAIM_TIMEOUT=1s
+  worker: RETRY_BASE=1s RETRY_MAX=5m, max_attempts=5 (column default), LIVENESS_TTL=30s, RECLAIM_EVERY=30s
+  provider: simulated, latency 50ms +/- 25ms uniform unless a test says otherwise, ledger on

@@ -1,0 +1,44 @@
+ Container notibench-k6-run-c8be6a5825d2 Creating 
+ Container notibench-k6-run-c8be6a5825d2 Created 
+
+
+  █ THRESHOLDS 
+
+    dropped_iterations{scenario:load}
+    ✓ 'count>=0' count=0
+
+    http_req_duration{scenario:load}
+    ✓ 'max>=0' max=148.87ms
+
+    http_req_failed{scenario:load}
+    ✓ 'rate>=0' rate=0.00%
+
+    http_reqs{scenario:load}
+    ✓ 'count>=0' count=18000
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=20.71ms min=9.75ms med=17.48ms p(90)=25.67ms p(95)=35.26ms p(99)=97.13ms max=295.6ms 
+      { expected_response:true }...: avg=20.71ms min=9.75ms med=17.48ms p(90)=25.67ms p(95)=35.26ms p(99)=97.13ms max=295.6ms 
+      { scenario:load }............: avg=19.87ms min=9.75ms med=17.47ms p(90)=25.1ms  p(95)=32.14ms p(99)=78.67ms max=148.87ms
+    http_req_failed................: 0.00%  0 out of 23999
+      { scenario:load }............: 0.00%  0 out of 18000
+    http_reqs......................: 23999  599.765248/s
+      { scenario:load }............: 18000  449.84268/s
+
+    EXECUTION
+    dropped_iterations.............: 2      0.049983/s
+      { scenario:load }............: 0      0/s
+    iteration_duration.............: avg=21.35ms min=10ms   med=18.03ms p(90)=26.51ms p(95)=36.56ms p(99)=97.82ms max=304.99ms
+    iterations.....................: 23999  599.765248/s
+    vus............................: 10     min=8          max=35 
+    vus_max........................: 241    min=241        max=241
+
+    NETWORK
+    data_received..................: 7.6 MB 190 kB/s
+    data_sent......................: 25 MB  630 kB/s
+
+
+

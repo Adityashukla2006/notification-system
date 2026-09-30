@@ -1,0 +1,24 @@
+ Container notibench-k6-run-d150f05292e8 Creating 
+ Container notibench-k6-run-d150f05292e8 Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=220.95ms min=66.93ms  med=212.09ms p(90)=261.13ms p(95)=279.69ms p(99)=515.93ms max=711.12ms
+      { expected_response:true }...: avg=220.95ms min=66.93ms  med=212.09ms p(90)=261.13ms p(95)=279.69ms p(99)=515.93ms max=711.12ms
+    http_req_failed................: 0.00% 0 out of 50000
+    http_reqs......................: 50000 899.134387/s
+
+    EXECUTION
+    iteration_duration.............: avg=221.9ms  min=111.51ms med=212.9ms  p(90)=262.09ms p(95)=280.82ms p(99)=519.1ms  max=742.58ms
+    iterations.....................: 50000 899.134387/s
+    vus............................: 200   min=200        max=200
+    vus_max........................: 200   min=200        max=200
+
+    NETWORK
+    data_received..................: 16 MB 284 kB/s
+    data_sent......................: 53 MB 945 kB/s
+
+
+

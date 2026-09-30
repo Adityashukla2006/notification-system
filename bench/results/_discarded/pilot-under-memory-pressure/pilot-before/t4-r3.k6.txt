@@ -1,0 +1,25 @@
+ Container notibench-k6-run-5c9726dca209 Creating 
+ Container notibench-k6-run-5c9726dca209 Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=1.8s min=58.74ms med=1.98s p(90)=2.17s p(95)=2.22s p(99)=2.31s max=2.55s
+      { expected_response:true }...: avg=1.8s min=58.74ms med=1.98s p(90)=2.17s p(95)=2.22s p(99)=2.31s max=2.55s
+    http_req_failed................: 0.00%  0 out of 7616
+    http_reqs......................: 7616   470.30734/s
+
+    EXECUTION
+    dropped_iterations.............: 7384   455.980751/s
+    iteration_duration.............: avg=1.8s min=60.67ms med=1.98s p(90)=2.17s p(95)=2.22s p(99)=2.31s max=2.55s
+    iterations.....................: 7616   470.30734/s
+    vus............................: 505    min=332       max=1000
+    vus_max........................: 1000   min=332       max=1000
+
+    NETWORK
+    data_received..................: 2.4 MB 149 kB/s
+    data_sent......................: 8.0 MB 492 kB/s
+
+
+

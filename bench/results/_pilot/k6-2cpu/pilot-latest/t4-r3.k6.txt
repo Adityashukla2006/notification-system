@@ -1,0 +1,25 @@
+ Container notibench-k6-run-eab0e772a88b Creating 
+ Container notibench-k6-run-eab0e772a88b Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=192.96ms min=15.65ms med=162.03ms p(90)=362.16ms p(95)=413.88ms p(99)=484.89ms max=635.22ms
+      { expected_response:true }...: avg=192.96ms min=15.65ms med=162.03ms p(90)=362.16ms p(95)=413.88ms p(99)=484.89ms max=635.22ms
+    http_req_failed................: 0.00%  0 out of 13609
+    http_reqs......................: 13609  892.174616/s
+
+    EXECUTION
+    dropped_iterations.............: 1392   91.256306/s
+    iteration_duration.............: avg=195.35ms min=16.22ms med=165.86ms p(90)=364.84ms p(95)=415.83ms p(99)=486.55ms max=636.03ms
+    iterations.....................: 13609  892.174616/s
+    vus............................: 327    min=84         max=327
+    vus_max........................: 349    min=201        max=349
+
+    NETWORK
+    data_received..................: 4.3 MB 282 kB/s
+    data_sent......................: 14 MB  933 kB/s
+
+
+

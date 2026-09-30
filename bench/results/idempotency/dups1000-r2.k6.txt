@@ -1,0 +1,30 @@
+ Container notibench-k6-run-89e1e0c88d6a Creating 
+ Container notibench-k6-run-89e1e0c88d6a Created 
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 1       0.04998/s
+    checks_succeeded...: 100.00% 1 out of 1
+    checks_failed......: 0.00%   0 out of 1
+
+    ✓ changed body on reused key is 409
+
+    HTTP
+    http_req_duration..............: avg=432.31ms min=7.44ms   med=451.62ms p(90)=527.57ms p(95)=533.52ms p(99)=540ms    max=557.31ms
+      { expected_response:true }...: avg=432.73ms min=189.17ms med=451.74ms p(90)=527.57ms p(95)=533.52ms p(99)=540.01ms max=557.31ms
+    http_req_failed................: 0.09%  1 out of 1001
+    http_reqs......................: 1001   50.029675/s
+
+    EXECUTION
+    iteration_duration.............: avg=16.66s   min=9.64ms   med=16.7s    p(90)=16.78s   p(95)=16.8s    p(99)=16.86s   max=16.88s  
+    iterations.....................: 1001   50.029675/s
+    vus............................: 0      min=0         max=1000
+    vus_max........................: 1001   min=1001      max=1001
+
+    NETWORK
+    data_received..................: 319 kB 16 kB/s
+    data_sent......................: 1.4 MB 71 kB/s
+
+
+

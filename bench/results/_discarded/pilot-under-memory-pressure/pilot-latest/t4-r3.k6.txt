@@ -1,0 +1,25 @@
+ Container notibench-k6-run-257d5f1678a0 Creating 
+ Container notibench-k6-run-257d5f1678a0 Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=236.79ms min=24.97ms med=241.75ms p(90)=368.94ms p(95)=392.91ms p(99)=437.14ms max=480.62ms
+      { expected_response:true }...: avg=236.79ms min=24.97ms med=241.75ms p(90)=368.94ms p(95)=392.91ms p(99)=437.14ms max=480.62ms
+    http_req_failed................: 0.00%  0 out of 14484
+    http_reqs......................: 14484  959.329108/s
+
+    EXECUTION
+    dropped_iterations.............: 516    34.176596/s
+    iteration_duration.............: avg=237.87ms min=25.53ms med=243.47ms p(90)=369.75ms p(95)=393.88ms p(99)=437.85ms max=481.66ms
+    iterations.....................: 14484  959.329108/s
+    vus............................: 179    min=100        max=393
+    vus_max........................: 398    min=200        max=398
+
+    NETWORK
+    data_received..................: 4.6 MB 303 kB/s
+    data_sent......................: 15 MB  1.0 MB/s
+
+
+

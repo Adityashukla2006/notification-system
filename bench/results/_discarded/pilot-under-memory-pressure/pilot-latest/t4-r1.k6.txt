@@ -1,0 +1,25 @@
+ Container notibench-k6-run-6f699d37f9be Creating 
+ Container notibench-k6-run-6f699d37f9be Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=391.85ms min=19.34ms med=358.69ms p(90)=679.94ms p(95)=770.71ms p(99)=847.45ms max=894.39ms
+      { expected_response:true }...: avg=391.85ms min=19.34ms med=358.69ms p(90)=679.94ms p(95)=770.71ms p(99)=847.45ms max=894.39ms
+    http_req_failed................: 0.00%  0 out of 13645
+    http_reqs......................: 13645  871.50995/s
+
+    EXECUTION
+    dropped_iterations.............: 1356   86.608098/s
+    iteration_duration.............: avg=393.02ms min=22.06ms med=359.87ms p(90)=681.12ms p(95)=771.79ms p(99)=850.18ms max=921.06ms
+    iterations.....................: 13645  871.50995/s
+    vus............................: 633    min=186        max=633
+    vus_max........................: 635    min=201        max=635
+
+    NETWORK
+    data_received..................: 4.3 MB 275 kB/s
+    data_sent......................: 14 MB  912 kB/s
+
+
+

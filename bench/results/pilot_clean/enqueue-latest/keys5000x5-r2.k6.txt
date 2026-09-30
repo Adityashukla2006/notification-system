@@ -1,0 +1,24 @@
+ Container notibench-k6-run-4d929f43daed Creating 
+ Container notibench-k6-run-4d929f43daed Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=416.2ms min=25.31ms  med=410.4ms  p(90)=519.16ms p(95)=561.37ms p(99)=659.85ms max=708.33ms
+      { expected_response:true }...: avg=416.2ms min=25.31ms  med=410.4ms  p(90)=519.16ms p(95)=561.37ms p(99)=659.85ms max=708.33ms
+    http_req_failed................: 0.00%  0 out of 25000
+    http_reqs......................: 25000  1084.304642/s
+
+    EXECUTION
+    iteration_duration.............: avg=458.4ms min=153.03ms med=453.88ms p(90)=551.68ms p(95)=611.68ms p(99)=682.23ms max=718.35ms
+    iterations.....................: 5000   216.860928/s
+    vus............................: 50     min=50         max=100
+    vus_max........................: 100    min=100        max=100
+
+    NETWORK
+    data_received..................: 7.9 MB 343 kB/s
+    data_sent......................: 26 MB  1.1 MB/s
+
+
+

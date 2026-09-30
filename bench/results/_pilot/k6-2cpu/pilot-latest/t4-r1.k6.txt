@@ -1,0 +1,25 @@
+ Container notibench-k6-run-410249b2d4b3 Creating 
+ Container notibench-k6-run-410249b2d4b3 Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=146.11ms min=14.81ms med=136.18ms p(90)=286.08ms p(95)=319.6ms  p(99)=413.14ms max=600.28ms
+      { expected_response:true }...: avg=146.11ms min=14.81ms med=136.18ms p(90)=286.08ms p(95)=319.6ms  p(99)=413.14ms max=600.28ms
+    http_req_failed................: 0.00%  0 out of 14114
+    http_reqs......................: 14114  926.386591/s
+
+    EXECUTION
+    dropped_iterations.............: 887    58.219137/s
+    iteration_duration.............: avg=147.73ms min=15.14ms med=137.94ms p(90)=287.87ms p(95)=322.12ms p(99)=417.61ms max=600.82ms
+    iterations.....................: 14114  926.386591/s
+    vus............................: 208    min=22         max=214
+    vus_max........................: 287    min=200        max=287
+
+    NETWORK
+    data_received..................: 4.5 MB 293 kB/s
+    data_sent......................: 15 MB  968 kB/s
+
+
+

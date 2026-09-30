@@ -1,0 +1,18 @@
+-- worker killed: notibench-worker-1 (worker id prefix 6db71b618bab)
+-- kill at:    2026-09-30 08:22:03.960828+00
+-- restart at: 2026-09-30 08:22:14.862869+00
+-- in-flight claims at kill: 7
+-- query: fate of every in-flight id, and recovery time (kill -> last of them delivered)
+ inflight_ids | delivered | not_delivered | recovery_s_from_kill | recovery_s_from_restart 
+--------------+-----------+---------------+----------------------+-------------------------
+            7 |         7 |             0 |                13.56 |                    2.66
+(1 row)
+
+-- worker-1 recovery log lines
+{"time":"2026-09-30T08:22:17.214923462Z","level":"INFO","msg":"recovered claims from a previous run","worker_id":"6db71b618bab-9","count":1}
+{"time":"2026-09-30T08:22:17.215364555Z","level":"INFO","msg":"recovered claims from a previous run","worker_id":"6db71b618bab-0","count":1}
+{"time":"2026-09-30T08:22:17.215655724Z","level":"INFO","msg":"recovered claims from a previous run","worker_id":"6db71b618bab-2","count":1}
+{"time":"2026-09-30T08:22:17.223139658Z","level":"INFO","msg":"recovered claims from a previous run","worker_id":"6db71b618bab-5","count":1}
+{"time":"2026-09-30T08:22:17.223494364Z","level":"INFO","msg":"recovered claims from a previous run","worker_id":"6db71b618bab-1","count":1}
+{"time":"2026-09-30T08:22:17.223752799Z","level":"INFO","msg":"recovered claims from a previous run","worker_id":"6db71b618bab-3","count":1}
+{"time":"2026-09-30T08:22:17.224191355Z","level":"INFO","msg":"recovered claims from a previous run","worker_id":"6db71b618bab-6","count":1}

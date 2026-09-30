@@ -1,0 +1,19 @@
+-- query: bench/sql/latency.sql
+== e2e latency, delivered rows, ms ==
+  n   | p50  |  p95   |  p99   |   max   
+------+------+--------+--------+---------
+ 4987 | 91.1 | 2800.8 | 6359.3 | 14338.9
+
+== e2e latency by tenant, ms ==
+     tenant     |  n   | p50  |  p95   |  p99   |   max   
+----------------+------+------+--------+--------+---------
+ bench-tenant-0 | 1247 | 89.3 | 2887.2 | 6647.6 | 14093.7
+ bench-tenant-1 | 1246 | 91.6 | 2742.5 | 6127.0 | 14325.6
+ bench-tenant-2 | 1248 | 91.6 | 2730.0 | 6014.5 | 12540.2
+ bench-tenant-3 | 1246 | 91.2 | 2959.3 | 6619.7 | 14338.9
+
+== provider call duration (delivery_attempts), ms ==
+ attempts | p50  | p99  
+----------+------+------
+     7046 | 51.1 | 75.8
+

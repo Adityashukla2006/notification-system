@@ -1,0 +1,24 @@
+ Container notibench-k6-run-f4601dfad3f9 Creating 
+ Container notibench-k6-run-f4601dfad3f9 Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=1.06s min=542.37ms med=1.03s p(90)=1.32s p(95)=1.4s p(99)=1.53s max=1.76s
+      { expected_response:true }...: avg=1.06s min=542.37ms med=1.03s p(90)=1.32s p(95)=1.4s p(99)=1.53s max=1.76s
+    http_req_failed................: 0.00%  0 out of 25000
+    http_reqs......................: 25000  434.287735/s
+
+    EXECUTION
+    iteration_duration.............: avg=1.14s min=638.8ms  med=1.08s p(90)=1.4s  p(95)=1.5s p(99)=1.66s max=1.76s
+    iterations.....................: 5000   86.857547/s
+    vus............................: 88     min=88         max=100
+    vus_max........................: 100    min=100        max=100
+
+    NETWORK
+    data_received..................: 7.9 MB 137 kB/s
+    data_sent......................: 26 MB  455 kB/s
+
+
+

@@ -1,0 +1,25 @@
+ Container notibench-k6-run-12c2f50699ae Creating 
+ Container notibench-k6-run-12c2f50699ae Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=69.72ms min=14.15ms med=36.52ms p(90)=158.74ms p(95)=239.35ms p(99)=417.19ms max=536.66ms
+      { expected_response:true }...: avg=69.72ms min=14.15ms med=36.52ms p(90)=158.74ms p(95)=239.35ms p(99)=417.19ms max=536.66ms
+    http_req_failed................: 0.00%  0 out of 11894
+    http_reqs......................: 11894  396.100837/s
+
+    EXECUTION
+    dropped_iterations.............: 106    3.530073/s
+    iteration_duration.............: avg=70.71ms min=14.83ms med=37.5ms  p(90)=159.51ms p(95)=242.06ms p(99)=418.98ms max=539.19ms
+    iterations.....................: 11894  396.100837/s
+    vus............................: 12     min=9          max=131
+    vus_max........................: 154    min=80         max=154
+
+    NETWORK
+    data_received..................: 3.8 MB 125 kB/s
+    data_sent......................: 13 MB  416 kB/s
+
+
+

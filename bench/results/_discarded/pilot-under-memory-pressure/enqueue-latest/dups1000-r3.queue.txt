@@ -1,0 +1,4 @@
+-- redis, workers stopped: every push of the id is still on the ready list
+LLEN notifications:queue = 1
+ZCARD notifications:scheduled = 0
+distinct ids on the queue = 1

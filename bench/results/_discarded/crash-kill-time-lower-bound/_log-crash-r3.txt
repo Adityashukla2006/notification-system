@@ -1,0 +1,126 @@
+2026-09-30T13:55:47 free_mb=1668 start crash 3..3
+
+[1m[13:56:09] crash: 200/s for 90s, SIGKILL worker-1 at 30s, restart after 5s, rep 3[0m
+ Container notibench-k6-run-741a68d15cef Creating 
+ Container notibench-k6-run-741a68d15cef Created 
+
+[1m[13:56:48] killed 384767d24cd8 at 2026-09-30 08:26:43.788525+00 with 5 claims in flight[0m
+
+
+  █ THRESHOLDS 
+
+    dropped_iterations{scenario:load}
+    ✓ 'count>=0' count=0
+
+    http_req_duration{scenario:load}
+    ✓ 'max>=0' max=165.41ms
+
+    http_req_failed{scenario:load}
+    ✓ 'rate>=0' rate=0.00%
+
+    http_reqs{scenario:load}
+    ✓ 'count>=0' count=18000
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=17.91ms min=7.07ms med=16.38ms p(90)=22.56ms p(95)=28.42ms p(99)=56.1ms  max=165.41ms
+      { expected_response:true }...: avg=17.91ms min=7.07ms med=16.38ms p(90)=22.56ms p(95)=28.42ms p(99)=56.1ms  max=165.41ms
+      { scenario:load }............: avg=17.91ms min=7.07ms med=16.38ms p(90)=22.56ms p(95)=28.42ms p(99)=56.1ms  max=165.41ms
+    http_req_failed................: 0.00%  0 out of 18000
+      { scenario:load }............: 0.00%  0 out of 18000
+    http_reqs......................: 18000  199.979614/s
+      { scenario:load }............: 18000  199.979614/s
+
+    EXECUTION
+    dropped_iterations.............: 0      0/s
+      { scenario:load }............: 0      0/s
+    iteration_duration.............: avg=18.52ms min=7.34ms med=16.97ms p(90)=23.37ms p(95)=29.37ms p(99)=57.31ms max=166.97ms
+    iterations.....................: 18000  199.979614/s
+    vus............................: 5      min=2          max=9 
+    vus_max........................: 50     min=50         max=50
+
+    NETWORK
+    data_received..................: 5.7 MB 63 kB/s
+    data_sent......................: 19 MB  209 kB/s
+
+
+
+-- query: bench/sql/verify.sql
+== status counts (all rows) ==
+  status   | count 
+-----------+-------
+ delivered | 18000
+
+== accepted ids vs notifications (lost = accepted_without_row + not_terminal) ==
+ responses_202 | distinct_accepted_ids | accepted_without_row | delivered | dead_lettered | not_terminal 
+---------------+-----------------------+----------------------+-----------+---------------+--------------
+         18000 |                 18000 |                    0 |     18000 |             0 |            0
+
+== rows sharing one (client_id, idempotency_key) (must be 0) ==
+ duplicated_keys 
+-----------------
+               0
+
+== duplicate deliveries: provider ledger (ground truth) ==
+ ids_sent_at_least_once | ids_sent_more_than_once | extra_sends | sent_but_not_marked_delivered 
+------------------------+-------------------------+-------------+-------------------------------
+                  18000 |                       0 |           0 |                             0
+
+ delivered_without_ledger_send 
+-------------------------------
+                             0
+
+== duplicate deliveries visible to Postgres ==
+ ids_with_multiple_succeeded_attempts 
+--------------------------------------
+                                    0
+
+-- query: bench/sql/latency.sql
+== e2e latency, delivered rows, ms ==
+   n   | p50  |  p95   |  p99   |   max   
+-------+------+--------+--------+---------
+ 18000 | 86.2 | 3421.7 | 4016.5 | 11920.2
+
+== e2e latency by tenant, ms ==
+     tenant     |  n   | p50  |  p95   |  p99   |   max   
+----------------+------+------+--------+--------+---------
+ bench-tenant-0 | 4500 | 86.7 | 3427.7 | 4016.2 | 11920.2
+ bench-tenant-1 | 4500 | 85.6 | 3439.8 | 4018.0 | 11893.9
+ bench-tenant-2 | 4500 | 86.8 | 3413.5 | 4015.5 | 11894.1
+ bench-tenant-3 | 4500 | 85.8 | 3419.0 | 4016.5 |  4245.3
+
+== provider call duration (delivery_attempts), ms ==
+ attempts | p50  | p99  
+----------+------+------
+    18000 | 51.1 | 75.8
+
+-- query: bench/sql/throughput.sql
+== throughput ==
+ total | delivered | window_s | delivered_per_s | drain_from_first_created_s | drain_after_last_created_s 
+-------+-----------+----------+-----------------+----------------------------+----------------------------
+ 18000 |     18000 |    90.02 |           200.0 |                      90.06 |                       0.09
+
+== delivered per 1s bucket ==
+ peak_1s | avg_1s_over_active_seconds 
+---------+----------------------------
+     299 |                      197.8
+
+-- worker killed: notibench-worker-1 (worker id prefix 384767d24cd8)
+-- kill at:    2026-09-30 08:26:43.788525+00
+-- restart at: 2026-09-30 08:26:55.01251+00
+-- in-flight claims at kill: 5
+-- query: fate of every in-flight id, and recovery time (kill -> last of them delivered)
+ inflight_ids | delivered | not_delivered | recovery_s_from_kill | recovery_s_from_restart 
+--------------+-----------+---------------+----------------------+-------------------------
+            5 |         5 |             0 |                13.87 |                    2.64
+(1 row)
+
+-- worker-1 recovery log lines
+{"time":"2026-09-30T08:26:57.473430034Z","level":"INFO","msg":"recovered claims from a previous run","worker_id":"384767d24cd8-7","count":1}
+{"time":"2026-09-30T08:26:57.481882729Z","level":"INFO","msg":"recovered claims from a previous run","worker_id":"384767d24cd8-3","count":1}
+{"time":"2026-09-30T08:26:57.482739952Z","level":"INFO","msg":"recovered claims from a previous run","worker_id":"384767d24cd8-8","count":1}
+{"time":"2026-09-30T08:26:57.487297392Z","level":"INFO","msg":"recovered claims from a previous run","worker_id":"384767d24cd8-9","count":1}
+{"time":"2026-09-30T08:26:57.487912431Z","level":"INFO","msg":"recovered claims from a previous run","worker_id":"384767d24cd8-5","count":1}
+2026-09-30T13:58:00 free_mb=1398 end crash 3..3 (exit 0)

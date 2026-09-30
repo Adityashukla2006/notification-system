@@ -1,0 +1,6 @@
+-- query: rows vs queue entries, workers stopped
+notification rows = 5000
+distinct ids in 202 responses = 5000
+LLEN notifications:queue (every push) = 15434
+distinct ids on the queue = 5000
+ids pushed more than once = 4435

@@ -1,0 +1,24 @@
+ Container notibench-k6-run-2608a14f60df Creating 
+ Container notibench-k6-run-2608a14f60df Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=81.34ms min=40.43ms med=77.78ms p(90)=102.91ms p(95)=117.15ms p(99)=162.82ms max=230.03ms
+      { expected_response:true }...: avg=81.34ms min=40.43ms med=77.78ms p(90)=102.91ms p(95)=117.15ms p(99)=162.82ms max=230.03ms
+    http_req_failed................: 0.00%  0 out of 20000
+    http_reqs......................: 20000  1214.304301/s
+
+    EXECUTION
+    iteration_duration.............: avg=82.13ms min=41.73ms med=78.49ms p(90)=103.86ms p(95)=118.3ms  p(99)=164.9ms  max=230.56ms
+    iterations.....................: 20000  1214.304301/s
+    vus............................: 100    min=100        max=100
+    vus_max........................: 100    min=100        max=100
+
+    NETWORK
+    data_received..................: 6.3 MB 384 kB/s
+    data_sent......................: 21 MB  1.3 MB/s
+
+
+

@@ -1,0 +1,6 @@
+state/
+results/_prior_unverified/
+# Raw accepted-id logs (84 MB). Each is loaded into Postgres by the harness and
+# the verification output (*.verify.txt) is committed; the lists stay on disk.
+results/**/*.ids
+results/_diag/*.csv

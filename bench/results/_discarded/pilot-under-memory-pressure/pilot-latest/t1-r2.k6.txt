@@ -1,0 +1,25 @@
+ Container notibench-k6-run-c1a13aa1dfdf Creating 
+ Container notibench-k6-run-c1a13aa1dfdf Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=373.74ms min=18.5ms  med=362.04ms p(90)=641.46ms p(95)=698.42ms p(99)=746.03ms max=811.26ms
+      { expected_response:true }...: avg=373.74ms min=18.5ms  med=362.04ms p(90)=641.46ms p(95)=698.42ms p(99)=746.03ms max=811.26ms
+    http_req_failed................: 0.00%  0 out of 13611
+    http_reqs......................: 13611  873.054566/s
+
+    EXECUTION
+    dropped_iterations.............: 1390   89.159198/s
+    iteration_duration.............: avg=375.02ms min=19.12ms med=363.06ms p(90)=642.24ms p(95)=699.63ms p(99)=746.87ms max=811.84ms
+    iterations.....................: 13611  873.054566/s
+    vus............................: 592    min=49         max=592
+    vus_max........................: 598    min=241        max=598
+
+    NETWORK
+    data_received..................: 4.3 MB 276 kB/s
+    data_sent......................: 14 MB  913 kB/s
+
+
+

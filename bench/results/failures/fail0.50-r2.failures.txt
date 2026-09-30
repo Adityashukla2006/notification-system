@@ -1,0 +1,25 @@
+-- query: bench/sql/failures.sql
+== outcome of every notification ==
+ total | delivered | dead_lettered | not_terminal | pct_delivered | pct_dead_lettered 
+-------+-----------+---------------+--------------+---------------+-------------------
+  5001 |      4849 |           152 |            0 |        96.961 |             3.039
+
+== attempts ==
+ attempts | failed_attempts | observed_fail_pct 
+----------+-----------------+-------------------
+     9702 |            4853 |             50.02
+
+== delivered notifications by attempts needed ==
+ n_attempts | count 
+------------+-------
+          1 |  2479
+          2 |  1251
+          3 |   664
+          4 |   306
+          5 |   149
+
+== dead-lettered rows by attempts recorded ==
+ attempts | max_attempts | count 
+----------+--------------+-------
+        5 |            5 |   152
+

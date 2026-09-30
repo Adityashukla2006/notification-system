@@ -1,0 +1,24 @@
+ Container notibench-k6-run-c1d195e1fe63 Creating 
+ Container notibench-k6-run-c1d195e1fe63 Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=439.53ms min=130.61ms med=431.65ms p(90)=540.73ms p(95)=575.03ms p(99)=646.96ms max=723.43ms
+      { expected_response:true }...: avg=439.53ms min=130.61ms med=431.65ms p(90)=540.73ms p(95)=575.03ms p(99)=646.96ms max=723.43ms
+    http_req_failed................: 0.00%  0 out of 25000
+    http_reqs......................: 25000  1032.208199/s
+
+    EXECUTION
+    iteration_duration.............: avg=481.77ms min=263.68ms med=476.23ms p(90)=575.4ms  p(95)=603.21ms p(99)=675.37ms max=724.98ms
+    iterations.....................: 5000   206.44164/s
+    vus............................: 99     min=99         max=100
+    vus_max........................: 100    min=100        max=100
+
+    NETWORK
+    data_received..................: 7.9 MB 326 kB/s
+    data_sent......................: 26 MB  1.1 MB/s
+
+
+

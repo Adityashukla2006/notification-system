@@ -1,0 +1,25 @@
+ Container notibench-k6-run-bb9f0540b9ff Creating 
+ Container notibench-k6-run-bb9f0540b9ff Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=609.11ms min=17.4ms  med=544.57ms p(90)=1.11s p(95)=1.25s p(99)=1.33s max=1.37s
+      { expected_response:true }...: avg=609.11ms min=17.4ms  med=544.57ms p(90)=1.11s p(95)=1.25s p(99)=1.33s max=1.37s
+    http_req_failed................: 0.00%  0 out of 12649
+    http_reqs......................: 12649  792.602434/s
+
+    EXECUTION
+    dropped_iterations.............: 2352   147.379313/s
+    iteration_duration.............: avg=610.58ms min=17.76ms med=545.96ms p(90)=1.11s p(95)=1.25s p(99)=1.33s max=1.37s
+    iterations.....................: 12649  792.602434/s
+    vus............................: 92     min=92         max=911
+    vus_max........................: 923    min=214        max=923
+
+    NETWORK
+    data_received..................: 4.0 MB 250 kB/s
+    data_sent......................: 13 MB  829 kB/s
+
+
+

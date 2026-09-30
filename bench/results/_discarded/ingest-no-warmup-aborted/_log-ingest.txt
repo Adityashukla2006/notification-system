@@ -1,0 +1,113 @@
+
+[1m[11:52:10] ingest: 200 req/s for 30s, rep 1[0m
+ Container notibench-k6-run-70dcd5777e35 Creating 
+ Container notibench-k6-run-70dcd5777e35 Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=42.93ms min=10.82ms med=21.63ms p(90)=66.26ms p(95)=107.6ms  p(99)=634.47ms max=1.08s
+      { expected_response:true }...: avg=42.93ms min=10.82ms med=21.63ms p(90)=66.26ms p(95)=107.6ms  p(99)=634.47ms max=1.08s
+    http_req_failed................: 0.00%  0 out of 5921
+    http_reqs......................: 5921   197.258613/s
+
+    EXECUTION
+    dropped_iterations.............: 80     2.665207/s
+    iteration_duration.............: avg=43.85ms min=11.28ms med=22.47ms p(90)=67.77ms p(95)=108.89ms p(99)=637.54ms max=1.09s
+    iterations.....................: 5921   197.258613/s
+    vus............................: 4      min=3         max=99 
+    vus_max........................: 102    min=99        max=102
+
+    NETWORK
+    data_received..................: 1.9 MB 62 kB/s
+    data_sent......................: 6.2 MB 207 kB/s
+
+
+
+
+[1m[11:52:56] ingest: 400 req/s for 30s, rep 1[0m
+ Container notibench-k6-run-12c2f50699ae Creating 
+ Container notibench-k6-run-12c2f50699ae Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=69.72ms min=14.15ms med=36.52ms p(90)=158.74ms p(95)=239.35ms p(99)=417.19ms max=536.66ms
+      { expected_response:true }...: avg=69.72ms min=14.15ms med=36.52ms p(90)=158.74ms p(95)=239.35ms p(99)=417.19ms max=536.66ms
+    http_req_failed................: 0.00%  0 out of 11894
+    http_reqs......................: 11894  396.100837/s
+
+    EXECUTION
+    dropped_iterations.............: 106    3.530073/s
+    iteration_duration.............: avg=70.71ms min=14.83ms med=37.5ms  p(90)=159.51ms p(95)=242.06ms p(99)=418.98ms max=539.19ms
+    iterations.....................: 11894  396.100837/s
+    vus............................: 12     min=9          max=131
+    vus_max........................: 154    min=80         max=154
+
+    NETWORK
+    data_received..................: 3.8 MB 125 kB/s
+    data_sent......................: 13 MB  416 kB/s
+
+
+
+
+[1m[11:53:42] ingest: 600 req/s for 30s, rep 1[0m
+ Container notibench-k6-run-c4861b789a64 Creating 
+ Container notibench-k6-run-c4861b789a64 Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=40.42ms min=13.84ms med=25.39ms p(90)=90.11ms p(95)=122.69ms p(99)=183.78ms max=330.71ms
+      { expected_response:true }...: avg=40.42ms min=13.84ms med=25.39ms p(90)=90.11ms p(95)=122.69ms p(99)=183.78ms max=330.71ms
+    http_req_failed................: 0.00%  0 out of 17960
+    http_reqs......................: 17960  598.393098/s
+
+    EXECUTION
+    dropped_iterations.............: 40     1.332724/s
+    iteration_duration.............: avg=41.33ms min=14.28ms med=26.22ms p(90)=91.48ms p(95)=124.66ms p(99)=185.08ms max=331.96ms
+    iterations.....................: 17960  598.393098/s
+    vus............................: 15     min=10         max=102
+    vus_max........................: 142    min=120        max=142
+
+    NETWORK
+    data_received..................: 5.7 MB 189 kB/s
+    data_sent......................: 19 MB  629 kB/s
+
+
+
+
+[1m[11:54:25] ingest: 800 req/s for 30s, rep 1[0m
+ Container notibench-k6-run-fcccb694a664 Creating 
+ Container notibench-k6-run-fcccb694a664 Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=970.24ms min=16.11ms med=792.39ms p(90)=2.08s p(95)=2.14s p(99)=2.34s max=2.47s
+      { expected_response:true }...: avg=970.24ms min=16.11ms med=792.39ms p(90)=2.08s p(95)=2.14s p(99)=2.34s max=2.47s
+    http_req_failed................: 0.00%  0 out of 16658
+    http_reqs......................: 16658  531.214375/s
+
+    EXECUTION
+    dropped_iterations.............: 7342   234.132305/s
+    iteration_duration.............: avg=971.73ms min=16.64ms med=795.17ms p(90)=2.08s p(95)=2.14s p(99)=2.34s max=2.47s
+    iterations.....................: 16658  531.214375/s
+    vus............................: 392    min=19         max=800
+    vus_max........................: 800    min=160        max=800
+
+    NETWORK
+    data_received..................: 5.3 MB 168 kB/s
+    data_sent......................: 18 MB  559 kB/s
+
+
+
+
+[1m[] ingest: 1000 req/s for 30s, rep 1[0m
+ Container notibench-k6-run-07714ed5bb8c Creating 
+ Container notibench-k6-run-07714ed5bb8c Created 
+

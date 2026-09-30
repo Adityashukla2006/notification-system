@@ -1,0 +1,184 @@
+# Isolated benchmark stack. Run via ./run.sh, not by hand.
+#
+# It is its own compose project ("notibench") with its own Postgres volume, so
+# it can never touch the development database, and it forces every real email
+# provider off: RESEND_API_KEY is blanked and the simulated provider is on
+# unless a run explicitly opts into Mailpit SMTP.
+#
+# Every container has a CPU and memory limit so results are reproducible and
+# the load generator cannot steal cycles from the system under test unnoticed.
+name: notibench
+
+x-pg-env: &pg_env
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: "5432"
+  POSTGRES_USER: bench
+  POSTGRES_PASSWORD: bench
+  POSTGRES_DBNAME: notifications
+  POSTGRES_SSLMODE: disable
+  REDIS_ADDR: redis:6379
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: bench
+      POSTGRES_PASSWORD: bench
+      POSTGRES_DB: notifications
+    # Stock postgres:17 settings except max_connections, raised so the API pool
+    # (40) + worker pools (50 each) + harness fit. fsync and synchronous_commit
+    # stay ON: every accepted notification is a durable commit.
+    command: ["postgres", "-c", "max_connections=300"]
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    deploy:
+      resources:
+        limits: { cpus: "4", memory: 2g }
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bench -d notifications"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    deploy:
+      resources:
+        limits: { cpus: "1", memory: 512m }
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  mailpit:
+    image: axllent/mailpit:latest
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+      MP_MAX_MESSAGES: 1000000
+    deploy:
+      resources:
+        limits: { cpus: "1", memory: 1g }
+
+  migrate:
+    build: { context: ../api }
+    image: notibench-app
+    entrypoint: ["/usr/local/bin/migrate"]
+    environment: *pg_env
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+
+  api:
+    # API_TAG=before runs the pre-fix build for the before/after pilot.
+    image: notibench-app:${API_TAG:-latest}
+    environment:
+      <<: *pg_env
+      HTTP_ADDR: ":8080"
+      LOG_LEVEL: info
+      POSTGRES_MAX_CONNS: "40"
+      # Throughput scenarios lift the per-tenant limit so it is not what gets
+      # measured; the rate-limit scenario sets a real one.
+      RATE_LIMIT_REQUESTS: ${BENCH_RATE_LIMIT:-100000000}
+      RATE_LIMIT_WINDOW: ${BENCH_RATE_WINDOW:-1m}
+    deploy:
+      resources:
+        limits: { cpus: "2", memory: 512m }
+    depends_on:
+      redis: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/server", "-healthcheck"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  worker:
+    image: notibench-app
+    entrypoint: ["/usr/local/bin/worker"]
+    environment:
+      <<: *pg_env
+      LOG_LEVEL: info
+      POSTGRES_MAX_CONNS: ${WORKER_PG_CONNS:-50}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-10}
+      WORKER_CLAIM_TIMEOUT: 1s
+      WORKER_DELIVERY_TIMEOUT: ${WORKER_DELIVERY_TIMEOUT:-30s}
+      WORKER_RETRY_BASE: ${WORKER_RETRY_BASE:-1s}
+      WORKER_RETRY_MAX: ${WORKER_RETRY_MAX:-5m}
+      WORKER_PROMOTE_LIMIT: ${WORKER_PROMOTE_LIMIT:-100}
+      WORKER_LIVENESS_TTL: ${WORKER_LIVENESS_TTL:-30s}
+      WORKER_RECLAIM_EVERY: ${WORKER_RECLAIM_EVERY:-30s}
+      RESEND_API_KEY: ""
+      SMTP_HOST: ${WORKER_SMTP_HOST:-}
+      SMTP_PORT: "1025"
+      SMTP_FROM: bench@notifications.local
+      SMTP_STARTTLS: "false"
+      PROVIDER_SIM_ENABLED: ${SIM_ENABLED:-true}
+      PROVIDER_SIM_LATENCY: ${SIM_LATENCY:-0s}
+      PROVIDER_SIM_JITTER: ${SIM_JITTER:-0s}
+      PROVIDER_SIM_FAIL_RATE: ${SIM_FAIL_RATE:-0}
+      PROVIDER_SIM_PERMANENT_RATE: ${SIM_PERMANENT_RATE:-0}
+      PROVIDER_SIM_TIMEOUT_RATE: ${SIM_TIMEOUT_RATE:-0}
+      PROVIDER_SIM_OUTAGE_AFTER: ${SIM_OUTAGE_AFTER:-0s}
+      PROVIDER_SIM_OUTAGE_FOR: ${SIM_OUTAGE_FOR:-0s}
+      PROVIDER_SIM_LEDGER: "true"
+    deploy:
+      resources:
+        limits: { cpus: "1", memory: 512m }
+    depends_on:
+      redis: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+
+  bench:
+    profiles: [tools]
+    build:
+      context: ../api
+      dockerfile: ../bench/Dockerfile
+    image: notibench-harness
+    environment:
+      BENCH_ALLOW_RESET: "1"
+      BENCH_DATABASE_URL: postgres://bench:bench@postgres:5432/notifications?sslmode=disable
+      BENCH_REDIS_ADDR: redis:6379
+    volumes:
+      - ./state:/state
+    deploy:
+      resources:
+        limits: { cpus: "2", memory: 1g }
+
+  # Load generator. Same Docker network as the API, CPU-limited so it cannot
+  # silently take cycles from the system under test.
+  k6:
+    profiles: [tools]
+    image: grafana/k6:1.3.0
+    volumes:
+      - ./k6:/scripts:ro
+      - ./state:/state:ro
+      - ./results:/results
+    environment:
+      TARGET: http://api:8080
+    # 4 CPUs: at 2, k6 itself saturated near 1,000 req/s during the pilot, so
+    # the load generator rather than the API would have set the ceiling.
+    deploy:
+      resources:
+        limits: { cpus: "4", memory: 2g }
+
+  # Queue-depth sampler: one atomic Lua call every 200 ms reads Redis's own
+  # clock, the ready list, the retry/schedule set, and every processing list.
+  sampler:
+    profiles: [tools]
+    image: redis:7-alpine
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        echo "t_redis	ready	scheduled	in_flight"
+        while :; do
+          redis-cli -h redis --raw EVAL "local t=redis.call('TIME') local p=0 for _,k in ipairs(redis.call('KEYS','notifications:processing:*')) do p=p+redis.call('LLEN',k) end return t[1]..'.'..string.format('%06d',t[2])..'	'..redis.call('LLEN','notifications:queue')..'	'..redis.call('ZCARD','notifications:scheduled')..'	'..p" 0
+          sleep 0.2
+        done
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 64m }
+
+volumes:
+  pg_data:

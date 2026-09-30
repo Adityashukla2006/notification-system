@@ -1,0 +1,25 @@
+ Container notibench-k6-run-c7b65458428e Creating 
+ Container notibench-k6-run-c7b65458428e Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=4.74s min=335.35ms med=5.14s p(90)=6.12s p(95)=6.22s p(99)=6.31s max=6.47s
+      { expected_response:true }...: avg=4.74s min=335.35ms med=5.14s p(90)=6.12s p(95)=6.22s p(99)=6.31s max=6.47s
+    http_req_failed................: 0.00%  0 out of 6082
+    http_reqs......................: 6082   428.543302/s
+
+    EXECUTION
+    dropped_iterations.............: 43919  3094.573051/s
+    iteration_duration.............: avg=4.79s min=373.05ms med=5.15s p(90)=6.12s p(95)=6.22s p(99)=6.32s max=6.47s
+    iterations.....................: 6082   428.543302/s
+    vus............................: 1917   min=615       max=2996
+    vus_max........................: 3120   min=1000      max=3120
+
+    NETWORK
+    data_received..................: 1.9 MB 135 kB/s
+    data_sent......................: 6.4 MB 451 kB/s
+
+
+

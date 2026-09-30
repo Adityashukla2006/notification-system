@@ -1,0 +1,25 @@
+ Container notibench-k6-run-70dcd5777e35 Creating 
+ Container notibench-k6-run-70dcd5777e35 Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=42.93ms min=10.82ms med=21.63ms p(90)=66.26ms p(95)=107.6ms  p(99)=634.47ms max=1.08s
+      { expected_response:true }...: avg=42.93ms min=10.82ms med=21.63ms p(90)=66.26ms p(95)=107.6ms  p(99)=634.47ms max=1.08s
+    http_req_failed................: 0.00%  0 out of 5921
+    http_reqs......................: 5921   197.258613/s
+
+    EXECUTION
+    dropped_iterations.............: 80     2.665207/s
+    iteration_duration.............: avg=43.85ms min=11.28ms med=22.47ms p(90)=67.77ms p(95)=108.89ms p(99)=637.54ms max=1.09s
+    iterations.....................: 5921   197.258613/s
+    vus............................: 4      min=3         max=99 
+    vus_max........................: 102    min=99        max=102
+
+    NETWORK
+    data_received..................: 1.9 MB 62 kB/s
+    data_sent......................: 6.2 MB 207 kB/s
+
+
+

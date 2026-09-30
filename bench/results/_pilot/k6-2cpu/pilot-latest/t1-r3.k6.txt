@@ -1,0 +1,25 @@
+ Container notibench-k6-run-2ef32082a0ec Creating 
+ Container notibench-k6-run-2ef32082a0ec Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=596.13ms min=63.44ms med=500.77ms p(90)=1.06s p(95)=1.18s p(99)=1.39s max=1.7s
+      { expected_response:true }...: avg=596.13ms min=63.44ms med=500.77ms p(90)=1.06s p(95)=1.18s p(99)=1.39s max=1.7s
+    http_req_failed................: 0.00%  0 out of 9839
+    http_reqs......................: 9839   630.369248/s
+
+    EXECUTION
+    dropped_iterations.............: 5072   324.955059/s
+    iteration_duration.............: avg=610.52ms min=64.44ms med=510.34ms p(90)=1.07s p(95)=1.19s p(99)=1.42s max=1.7s
+    iterations.....................: 9839   630.369248/s
+    vus............................: 91     min=91        max=701
+    vus_max........................: 741    min=201       max=741
+
+    NETWORK
+    data_received..................: 3.1 MB 199 kB/s
+    data_sent......................: 10 MB  659 kB/s
+
+
+

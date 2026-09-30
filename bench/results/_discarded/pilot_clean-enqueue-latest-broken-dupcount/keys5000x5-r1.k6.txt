@@ -1,0 +1,24 @@
+ Container notibench-k6-run-8b334ad5e940 Creating 
+ Container notibench-k6-run-8b334ad5e940 Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=439.4ms  min=257.31ms med=427.97ms p(90)=547.67ms p(95)=589.32ms p(99)=635.46ms max=747.53ms
+      { expected_response:true }...: avg=439.4ms  min=257.31ms med=427.97ms p(90)=547.67ms p(95)=589.32ms p(99)=635.46ms max=747.53ms
+    http_req_failed................: 0.00%  0 out of 25000
+    http_reqs......................: 25000  1040.128876/s
+
+    EXECUTION
+    iteration_duration.............: avg=478.24ms min=262.61ms med=476.15ms p(90)=587.88ms p(95)=625.64ms p(99)=698.84ms max=790.86ms
+    iterations.....................: 5000   208.025775/s
+    vus............................: 47     min=47         max=100
+    vus_max........................: 100    min=100        max=100
+
+    NETWORK
+    data_received..................: 7.9 MB 329 kB/s
+    data_sent......................: 26 MB  1.1 MB/s
+
+
+

@@ -1,0 +1,25 @@
+ Container notibench-k6-run-1430b2daf229 Creating 
+ Container notibench-k6-run-1430b2daf229 Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=5.27s min=1s    med=5.95s p(90)=6.38s p(95)=6.58s p(99)=7.21s max=8.69s
+      { expected_response:true }...: avg=5.27s min=1s    med=5.95s p(90)=6.38s p(95)=6.58s p(99)=7.21s max=8.69s
+    http_req_failed................: 0.00%  0 out of 2958
+    http_reqs......................: 2958   162.579737/s
+
+    EXECUTION
+    dropped_iterations.............: 12043  661.916081/s
+    iteration_duration.............: avg=5.28s min=1.02s med=5.95s p(90)=6.39s p(95)=6.59s p(99)=7.22s max=8.7s 
+    iterations.....................: 2958   162.579737/s
+    vus............................: 563    min=354       max=1000
+    vus_max........................: 1000   min=354       max=1000
+
+    NETWORK
+    data_received..................: 934 kB 51 kB/s
+    data_sent......................: 3.1 MB 171 kB/s
+
+
+

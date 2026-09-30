@@ -1,0 +1,25 @@
+ Container notibench-k6-run-9a672a101a33 Creating 
+ Container notibench-k6-run-9a672a101a33 Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=69.19ms min=11.89ms med=57.08ms p(90)=118.48ms p(95)=146.24ms p(99)=375.45ms max=536.99ms
+      { expected_response:true }...: avg=69.19ms min=11.89ms med=57.08ms p(90)=118.48ms p(95)=146.24ms p(99)=375.45ms max=536.99ms
+    http_req_failed................: 0.00%  0 out of 14764
+    http_reqs......................: 14764  979.967906/s
+
+    EXECUTION
+    dropped_iterations.............: 238    15.797369/s
+    iteration_duration.............: avg=70.37ms min=12.2ms  med=57.93ms p(90)=120.2ms  p(95)=149.23ms p(99)=397.45ms max=541.52ms
+    iterations.....................: 14764  979.967906/s
+    vus............................: 127    min=24         max=160
+    vus_max........................: 278    min=278        max=278
+
+    NETWORK
+    data_received..................: 4.7 MB 310 kB/s
+    data_sent......................: 15 MB  1.0 MB/s
+
+
+
