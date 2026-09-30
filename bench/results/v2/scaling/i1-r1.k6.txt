@@ -1,0 +1,24 @@
+ Container notibench-k6-run-f5beadc15b22 Creating 
+ Container notibench-k6-run-f5beadc15b22 Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=86.63ms min=41.99ms med=82.58ms p(90)=105.34ms p(95)=114.38ms p(99)=154.74ms max=496.06ms
+      { expected_response:true }...: avg=86.63ms min=41.99ms med=82.58ms p(90)=105.34ms p(95)=114.38ms p(99)=154.74ms max=496.06ms
+    http_req_failed................: 0.00%  0 out of 20000
+    http_reqs......................: 20000  1141.37134/s
+
+    EXECUTION
+    iteration_duration.............: avg=87.43ms min=42.43ms med=83.26ms p(90)=106.15ms p(95)=115.2ms  p(99)=155.57ms max=505.5ms 
+    iterations.....................: 20000  1141.37134/s
+    vus............................: 100    min=100        max=100
+    vus_max........................: 100    min=100        max=100
+
+    NETWORK
+    data_received..................: 6.3 MB 361 kB/s
+    data_sent......................: 21 MB  1.2 MB/s
+
+
+

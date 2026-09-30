@@ -1,0 +1,186 @@
+2026-09-30T17:16:03 free_mb=1772 [v2] start burst 2..3
+
+[1m[17:16:24] burst: 50000 as fast as possible, 4 x 10, rep 2[0m
+ Container notibench-sampler Creating 
+ Container notibench-sampler Created 
+ Container notibench-k6-run-bc15995b75f8 Creating 
+ Container notibench-k6-run-bc15995b75f8 Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=226.89ms min=125.1ms  med=215.6ms  p(90)=278.61ms p(95)=307.94ms p(99)=530.13ms max=908.47ms
+      { expected_response:true }...: avg=226.89ms min=125.1ms  med=215.6ms  p(90)=278.61ms p(95)=307.94ms p(99)=530.13ms max=908.47ms
+    http_req_failed................: 0.00% 0 out of 50000
+    http_reqs......................: 50000 876.416212/s
+
+    EXECUTION
+    iteration_duration.............: avg=227.74ms min=125.54ms med=216.37ms p(90)=279.55ms p(95)=309.07ms p(99)=532.96ms max=908.88ms
+    iterations.....................: 50000 876.416212/s
+    vus............................: 152   min=152        max=200
+    vus_max........................: 200   min=200        max=200
+
+    NETWORK
+    data_received..................: 16 MB 277 kB/s
+    data_sent......................: 53 MB 921 kB/s
+
+
+
+-- query: bench/sql/verify.sql
+== status counts (all rows) ==
+  status   | count 
+-----------+-------
+ delivered | 50000
+
+== accepted ids vs notifications (lost = accepted_without_row + not_terminal) ==
+ responses_202 | distinct_accepted_ids | accepted_without_row | delivered | dead_lettered | not_terminal 
+---------------+-----------------------+----------------------+-----------+---------------+--------------
+         50000 |                 50000 |                    0 |     50000 |             0 |            0
+
+== rows sharing one (client_id, idempotency_key) (must be 0) ==
+ duplicated_keys 
+-----------------
+               0
+
+== duplicate deliveries: provider ledger (ground truth) ==
+ ids_sent_at_least_once | ids_sent_more_than_once | extra_sends | sent_but_not_marked_delivered 
+------------------------+-------------------------+-------------+-------------------------------
+                  50000 |                       0 |           0 |                             0
+
+ delivered_without_ledger_send 
+-------------------------------
+                             0
+
+== every duplicated send, with its full attempt history (evidence for the cause) ==
+ id | ledger_sends | status | attempt_number | outcome | started | finished 
+----+--------------+--------+----------------+---------+---------+----------
+
+== duplicate deliveries visible to Postgres ==
+ ids_with_multiple_succeeded_attempts 
+--------------------------------------
+                                    0
+
+-- query: bench/sql/latency.sql
+== e2e latency, delivered rows, ms ==
+   n   |   p50   |   p95   |   p99   |   max   
+-------+---------+---------+---------+---------
+ 50000 | 34772.6 | 49826.8 | 51052.0 | 51476.0
+
+== e2e latency by tenant, ms ==
+     tenant     |   n   |   p50   |   p95   |   p99   |   max   
+----------------+-------+---------+---------+---------+---------
+ bench-tenant-0 | 12500 | 34762.8 | 49821.2 | 51049.2 | 51460.5
+ bench-tenant-1 | 12500 | 34751.2 | 49802.4 | 51021.1 | 51436.6
+ bench-tenant-2 | 12500 | 34777.9 | 49833.2 | 51060.3 | 51471.3
+ bench-tenant-3 | 12500 | 34782.7 | 49841.2 | 51075.6 | 51476.0
+
+== provider call duration (delivery_attempts), ms ==
+ attempts | p50  | p99  
+----------+------+------
+    50000 | 51.9 | 77.9
+
+-- query: bench/sql/throughput.sql
+== throughput ==
+ total | delivered | window_s | delivered_per_s | drain_from_first_created_s | drain_after_last_created_s 
+-------+-----------+----------+-----------------+----------------------------+----------------------------
+ 50000 |     50000 |   107.83 |           463.7 |                     108.18 |                      51.46
+
+== delivered per 1s bucket ==
+ peak_1s | avg_1s_over_active_seconds 
+---------+----------------------------
+     582 |                      458.7
+
+
+[1m[17:18:50] burst: 50000 as fast as possible, 4 x 10, rep 3[0m
+ Container notibench-sampler Creating 
+ Container notibench-sampler Created 
+ Container notibench-k6-run-8016fac89fa3 Creating 
+ Container notibench-k6-run-8016fac89fa3 Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=276.08ms min=86.42ms med=255.42ms p(90)=385.02ms p(95)=422.83ms p(99)=522.3ms  max=695.09ms
+      { expected_response:true }...: avg=276.08ms min=86.42ms med=255.42ms p(90)=385.02ms p(95)=422.83ms p(99)=522.3ms  max=695.09ms
+    http_req_failed................: 0.00% 0 out of 50000
+    http_reqs......................: 50000 721.042741/s
+
+    EXECUTION
+    iteration_duration.............: avg=276.98ms min=91.46ms med=256.37ms p(90)=386.2ms  p(95)=423.87ms p(99)=524.02ms max=695.88ms
+    iterations.....................: 50000 721.042741/s
+    vus............................: 200   min=200        max=200
+    vus_max........................: 200   min=200        max=200
+
+    NETWORK
+    data_received..................: 16 MB 228 kB/s
+    data_sent......................: 53 MB 758 kB/s
+
+
+
+-- query: bench/sql/verify.sql
+== status counts (all rows) ==
+  status   | count 
+-----------+-------
+ delivered | 50000
+
+== accepted ids vs notifications (lost = accepted_without_row + not_terminal) ==
+ responses_202 | distinct_accepted_ids | accepted_without_row | delivered | dead_lettered | not_terminal 
+---------------+-----------------------+----------------------+-----------+---------------+--------------
+         50000 |                 50000 |                    0 |     50000 |             0 |            0
+
+== rows sharing one (client_id, idempotency_key) (must be 0) ==
+ duplicated_keys 
+-----------------
+               0
+
+== duplicate deliveries: provider ledger (ground truth) ==
+ ids_sent_at_least_once | ids_sent_more_than_once | extra_sends | sent_but_not_marked_delivered 
+------------------------+-------------------------+-------------+-------------------------------
+                  50000 |                       0 |           0 |                             0
+
+ delivered_without_ledger_send 
+-------------------------------
+                             0
+
+== every duplicated send, with its full attempt history (evidence for the cause) ==
+ id | ledger_sends | status | attempt_number | outcome | started | finished 
+----+--------------+--------+----------------+---------+---------+----------
+
+== duplicate deliveries visible to Postgres ==
+ ids_with_multiple_succeeded_attempts 
+--------------------------------------
+                                    0
+
+-- query: bench/sql/latency.sql
+== e2e latency, delivered rows, ms ==
+   n   |   p50   |   p95   |   p99   |   max   
+-------+---------+---------+---------+---------
+ 50000 | 30467.7 | 46986.7 | 48163.4 | 48642.7
+
+== e2e latency by tenant, ms ==
+     tenant     |   n   |   p50   |   p95   |   p99   |   max   
+----------------+-------+---------+---------+---------+---------
+ bench-tenant-0 | 12500 | 30475.4 | 46996.7 | 48171.4 | 48638.7
+ bench-tenant-1 | 12500 | 30447.8 | 46988.6 | 48161.4 | 48625.6
+ bench-tenant-2 | 12500 | 30443.8 | 46967.0 | 48141.2 | 48623.5
+ bench-tenant-3 | 12500 | 30473.2 | 46991.2 | 48171.5 | 48642.7
+
+== provider call duration (delivery_attempts), ms ==
+ attempts | p50  | p99  
+----------+------+------
+    50000 | 52.2 | 78.6
+
+-- query: bench/sql/throughput.sql
+== throughput ==
+ total | delivered | window_s | delivered_per_s | drain_from_first_created_s | drain_after_last_created_s 
+-------+-----------+----------+-----------------+----------------------------+----------------------------
+ 50000 |     50000 |   117.76 |           424.6 |                     117.89 |                      48.63
+
+== delivered per 1s bucket ==
+ peak_1s | avg_1s_over_active_seconds 
+---------+----------------------------
+     574 |                      420.2
+
+2026-09-30T17:21:15 free_mb=1531 [v2] end burst 2..3 (exit 0)

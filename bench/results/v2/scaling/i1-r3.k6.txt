@@ -1,0 +1,24 @@
+ Container notibench-k6-run-8cfda07f63c9 Creating 
+ Container notibench-k6-run-8cfda07f63c9 Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=82.08ms min=41.62ms med=79.19ms p(90)=103.59ms p(95)=113.55ms p(99)=150.95ms max=293.53ms
+      { expected_response:true }...: avg=82.08ms min=41.62ms med=79.19ms p(90)=103.59ms p(95)=113.55ms p(99)=150.95ms max=293.53ms
+    http_req_failed................: 0.00%  0 out of 20000
+    http_reqs......................: 20000  1203.799959/s
+
+    EXECUTION
+    iteration_duration.............: avg=82.91ms min=42.03ms med=79.96ms p(90)=104.75ms p(95)=114.92ms p(99)=151.71ms max=294.15ms
+    iterations.....................: 20000  1203.799959/s
+    vus............................: 100    min=100        max=100
+    vus_max........................: 100    min=100        max=100
+
+    NETWORK
+    data_received..................: 6.3 MB 380 kB/s
+    data_sent......................: 21 MB  1.3 MB/s
+
+
+

@@ -1,0 +1,11 @@
+-- query: bench/sql/throughput.sql
+== throughput ==
+ total | delivered | window_s | delivered_per_s | drain_from_first_created_s | drain_after_last_created_s 
+-------+-----------+----------+-----------------+----------------------------+----------------------------
+ 20000 |     20000 |    37.70 |           530.4 |                      59.18 |                      41.32
+
+== delivered per 1s bucket ==
+ peak_1s | avg_1s_over_active_seconds 
+---------+----------------------------
+     587 |                      526.3
+

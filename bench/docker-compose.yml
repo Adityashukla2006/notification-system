@@ -80,8 +80,12 @@ services:
       POSTGRES_MAX_CONNS: "40"
       # Throughput scenarios lift the per-tenant limit so it is not what gets
       # measured; the rate-limit scenario sets a real one.
-      RATE_LIMIT_REQUESTS: ${BENCH_RATE_LIMIT:-100000000}
-      RATE_LIMIT_WINDOW: ${BENCH_RATE_WINDOW:-1m}
+      RATE_LIMIT_RATE: ${BENCH_RATE_LIMIT_RATE:-1000000}
+      RATE_LIMIT_BURST: ${BENCH_RATE_LIMIT_BURST:-1000000}
+      # Read only by pre-token-bucket builds (API_TAG=before, bench-v1), so the
+      # bench-v1 pilot stays reproducible with its limit lifted as before.
+      RATE_LIMIT_REQUESTS: "100000000"
+      RATE_LIMIT_WINDOW: 1m
     deploy:
       resources:
         limits: { cpus: "2", memory: 512m }
@@ -173,7 +177,7 @@ services:
       - |
         echo "t_redis	ready	scheduled	in_flight"
         while :; do
-          redis-cli -h redis --raw EVAL "local t=redis.call('TIME') local p=0 for _,k in ipairs(redis.call('KEYS','notifications:processing:*')) do p=p+redis.call('LLEN',k) end return t[1]..'.'..string.format('%06d',t[2])..'	'..redis.call('LLEN','notifications:queue')..'	'..redis.call('ZCARD','notifications:scheduled')..'	'..p" 0
+          redis-cli -h redis --raw EVAL "local t=redis.call('TIME') local p=0 for _,k in ipairs(redis.call('KEYS','notifications:processing:*')) do p=p+redis.call('LLEN',k) end local r=redis.call('LLEN','notifications:queue') for _,k in ipairs(redis.call('KEYS','notifications:q:*')) do r=r+redis.call('LLEN',k) end return t[1]..'.'..string.format('%06d',t[2])..'	'..r..'	'..redis.call('ZCARD','notifications:scheduled')..'	'..p" 0
           sleep 0.2
         done
     deploy:

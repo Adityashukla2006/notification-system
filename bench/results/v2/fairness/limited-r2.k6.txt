@@ -1,0 +1,51 @@
+ Container notibench-k6-run-823b65468468 Creating 
+ Container notibench-k6-run-823b65468468 Created 
+
+
+  █ THRESHOLDS 
+
+    http_req_duration{tenant:0}
+    ✓ 'max>=0' max=282.21ms
+
+    http_req_duration{tenant:1}
+    ✓ 'max>=0' max=255.45ms
+
+    http_req_failed{tenant:0}
+    ✓ 'rate>=0' rate=49.19%
+
+    http_req_failed{tenant:1}
+    ✓ 'rate>=0' rate=0.00%
+
+    http_reqs{tenant:0}
+    ✓ 'count>=0' count=12001
+
+    http_reqs{tenant:1}
+    ✓ 'count>=0' count=1201
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=13.83ms min=1.05ms med=12.58ms p(90)=22.83ms p(95)=29.97ms p(99)=103.85ms max=282.21ms
+      { expected_response:true }...: avg=21.85ms min=6.58ms med=17.33ms p(90)=28.14ms p(95)=42.99ms p(99)=134.72ms max=282.21ms
+      { tenant:0 }.................: avg=13.09ms min=1.05ms med=10.75ms p(90)=22.4ms  p(95)=29.13ms p(99)=103.2ms  max=282.21ms
+      { tenant:1 }.................: avg=21.21ms min=7.92ms med=17.67ms p(90)=27.6ms  p(95)=41.81ms p(99)=110.97ms max=255.45ms
+    http_req_failed................: 44.72% 5904 out of 13202
+      { tenant:0 }.................: 49.19% 5904 out of 12001
+      { tenant:1 }.................: 0.00%  0 out of 1201
+    http_reqs......................: 13202  219.992503/s
+      { tenant:0 }.................: 12001  199.97955/s
+      { tenant:1 }.................: 1201   20.012952/s
+
+    EXECUTION
+    iteration_duration.............: avg=14.45ms min=1.28ms med=13.03ms p(90)=23.67ms p(95)=30.88ms p(99)=105.22ms max=285.84ms
+    iterations.....................: 13202  219.992503/s
+    vus............................: 2      min=1             max=16 
+    vus_max........................: 120    min=120           max=120
+
+    NETWORK
+    data_received..................: 3.7 MB 62 kB/s
+    data_sent......................: 14 MB  231 kB/s
+
+
+

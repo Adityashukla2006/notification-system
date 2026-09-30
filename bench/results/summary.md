@@ -89,6 +89,26 @@ Values are `median (min–max)` over repetitions unless noted.
 2026-09-30T15:59:55 free_mb=2100 end burst 1..1 (exit 0)
 2026-09-30T16:00:06 free_mb=2166 start burst 2..3
 2026-09-30T16:05:00 free_mb=2225 end burst 2..3 (exit 0)
+2026-09-30T16:22:54 free_mb=1795 start e2e 1..1
+2026-09-30T16:23:45 free_mb=1984 end e2e 1..1 (exit 0)
+2026-09-30T16:24:24 free_mb=2007 [v2] start fairness 1..1
+2026-09-30T16:29:51 free_mb=2329 [v2] end fairness 1..1 (exit 0)
+2026-09-30T16:30:02 free_mb=2265 [v2] start fairness 2..2
+2026-09-30T16:35:21 free_mb=1783 [v2] end fairness 2..2 (exit 0)
+2026-09-30T16:35:31 free_mb=1829 [v2] start fairness 3..3
+2026-09-30T16:41:03 free_mb=1437 [v2] end fairness 3..3 (exit 0)
+2026-09-30T16:41:15 free_mb=1481 [v2] start crash 1..1
+2026-09-30T16:43:28 free_mb=1205 [v2] end crash 1..1 (exit 0)
+2026-09-30T16:43:31 free_mb=1063 [v2] start crash 2..2
+2026-09-30T16:45:46 free_mb=1396 [v2] end crash 2..2 (exit 0)
+2026-09-30T16:45:48 free_mb=1437 [v2] start crash 3..3
+2026-09-30T16:47:59 free_mb=1704 [v2] end crash 3..3 (exit 0)
+2026-09-30T16:48:19 free_mb=1408 [v2] start scaling 1..3
+2026-09-30T16:57:42 free_mb=2108 [v2] end scaling 1..3 (exit 0)
+2026-09-30T16:57:53 free_mb=2046 [v2] start scaling 1..3
+2026-09-30T17:04:37 free_mb=1429 [v2] end scaling 1..3 (exit 0)
+2026-09-30T17:04:46 free_mb=1475 [v2] start scaling 1..3
+2026-09-30T17:13:00 free_mb=2203 [v2] end scaling 1..3 (exit 0)
 ```
 
 ## 1. Ingestion (open-loop fixed rate; 10 s warm-up then 30 s measured per step; 4 tenants; workers stopped)

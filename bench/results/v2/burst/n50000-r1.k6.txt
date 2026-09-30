@@ -1,0 +1,24 @@
+ Container notibench-k6-run-8b3f80173201 Creating 
+ Container notibench-k6-run-8b3f80173201 Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=233.55ms min=105.82ms med=221.34ms p(90)=294.64ms p(95)=323.55ms p(99)=434.59ms max=918.03ms
+      { expected_response:true }...: avg=233.55ms min=105.82ms med=221.34ms p(90)=294.64ms p(95)=323.55ms p(99)=434.59ms max=918.03ms
+    http_req_failed................: 0.00% 0 out of 50000
+    http_reqs......................: 50000 850.939194/s
+
+    EXECUTION
+    iteration_duration.............: avg=234.51ms min=106.22ms med=222.12ms p(90)=295.73ms p(95)=324.49ms p(99)=438.32ms max=933.69ms
+    iterations.....................: 50000 850.939194/s
+    vus............................: 200   min=200        max=200
+    vus_max........................: 200   min=200        max=200
+
+    NETWORK
+    data_received..................: 16 MB 269 kB/s
+    data_sent......................: 53 MB 894 kB/s
+
+
+

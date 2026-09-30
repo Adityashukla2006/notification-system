@@ -1,0 +1,24 @@
+ Container notibench-k6-run-878dd3cd74c4 Creating 
+ Container notibench-k6-run-878dd3cd74c4 Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=119.77ms min=45.3ms  med=108.99ms p(90)=175.01ms p(95)=201.23ms p(99)=246.59ms max=475.55ms
+      { expected_response:true }...: avg=119.77ms min=45.3ms  med=108.99ms p(90)=175.01ms p(95)=201.23ms p(99)=246.59ms max=475.55ms
+    http_req_failed................: 0.00%  0 out of 20000
+    http_reqs......................: 20000  825.832745/s
+
+    EXECUTION
+    iteration_duration.............: avg=120.81ms min=45.71ms med=109.88ms p(90)=176.05ms p(95)=202.49ms p(99)=251.02ms max=480.13ms
+    iterations.....................: 20000  825.832745/s
+    vus............................: 100    min=100        max=100
+    vus_max........................: 100    min=100        max=100
+
+    NETWORK
+    data_received..................: 6.3 MB 261 kB/s
+    data_sent......................: 21 MB  864 kB/s
+
+
+

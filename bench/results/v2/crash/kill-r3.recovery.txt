@@ -1,0 +1,16 @@
+-- worker killed: notibench-worker-1 (worker id prefix 896c61242937)
+-- psql time just before docker kill (lower bound): 2026-09-30 11:16:43.124341+00
+-- process died (docker State.FinishedAt): 2026-09-30T11:16:45.311921705Z
+-- process restarted (docker State.StartedAt): 2026-09-30T11:16:52.458453983Z
+-- in-flight claims at kill: 4
+-- query: fate of every in-flight id, and recovery time (kill -> last of them delivered)
+ inflight_ids | delivered | not_delivered | recovery_s_from_kill | recovery_s_from_restart 
+--------------+-----------+---------------+----------------------+-------------------------
+            4 |         4 |             0 |                 7.68 |                    0.54
+(1 row)
+
+-- worker-1 recovery log lines
+{"time":"2026-09-30T11:16:52.852421634Z","level":"INFO","msg":"recovered claims from a previous run","worker_id":"896c61242937-9","count":1}
+{"time":"2026-09-30T11:16:52.853164592Z","level":"INFO","msg":"recovered claims from a previous run","worker_id":"896c61242937-0","count":1}
+{"time":"2026-09-30T11:16:52.853358058Z","level":"INFO","msg":"recovered claims from a previous run","worker_id":"896c61242937-1","count":1}
+{"time":"2026-09-30T11:16:52.854845732Z","level":"INFO","msg":"recovered claims from a previous run","worker_id":"896c61242937-4","count":1}

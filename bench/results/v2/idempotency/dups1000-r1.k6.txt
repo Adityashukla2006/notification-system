@@ -1,0 +1,30 @@
+ Container notibench-k6-run-5c48624a460b Creating 
+ Container notibench-k6-run-5c48624a460b Created 
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 1       0.049984/s
+    checks_succeeded...: 100.00% 1 out of 1
+    checks_failed......: 0.00%   0 out of 1
+
+    ✓ changed body on reused key is 409
+
+    HTTP
+    http_req_duration..............: avg=998.28ms min=7.21ms   med=1.07s p(90)=1.28s  p(95)=1.29s  p(99)=1.31s  max=1.32s 
+      { expected_response:true }...: avg=999.27ms min=468.39ms med=1.07s p(90)=1.28s  p(95)=1.29s  p(99)=1.31s  max=1.32s 
+    http_req_failed................: 0.09%  1 out of 1001
+    http_reqs......................: 1001   50.034371/s
+
+    EXECUTION
+    iteration_duration.............: avg=17.31s   min=8.97ms   med=17.4s p(90)=17.63s p(95)=17.64s p(99)=17.67s max=17.72s
+    iterations.....................: 1001   50.034371/s
+    vus............................: 0      min=0         max=1000
+    vus_max........................: 1001   min=1001      max=1001
+
+    NETWORK
+    data_received..................: 318 kB 16 kB/s
+    data_sent......................: 1.4 MB 71 kB/s
+
+
+

@@ -1,0 +1,21 @@
+-- query: bench/sql/idempotency.sql
+== rows per idempotency key (must be exactly 1) ==
+       idempotency_key       | rows |                  id                  |  status   
+-----------------------------+------+--------------------------------------+-----------
+ dups1000-r1-1790769112-idem |    1 | 01a0f228-734f-7bf1-9cd7-5d1999e3ce01 | delivered
+
+== total rows in notifications ==
+ total_rows 
+------------
+          1
+
+== ids returned in 202 responses ==
+ responses_202 | distinct_ids 
+---------------+--------------
+          1000 |            1
+
+== delivery attempts and provider-ledger sends for that row ==
+ attempts | ledger_sends 
+----------+--------------
+        1 |            1
+

@@ -1,0 +1,24 @@
+ Container notibench-k6-run-8016fac89fa3 Creating 
+ Container notibench-k6-run-8016fac89fa3 Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=276.08ms min=86.42ms med=255.42ms p(90)=385.02ms p(95)=422.83ms p(99)=522.3ms  max=695.09ms
+      { expected_response:true }...: avg=276.08ms min=86.42ms med=255.42ms p(90)=385.02ms p(95)=422.83ms p(99)=522.3ms  max=695.09ms
+    http_req_failed................: 0.00% 0 out of 50000
+    http_reqs......................: 50000 721.042741/s
+
+    EXECUTION
+    iteration_duration.............: avg=276.98ms min=91.46ms med=256.37ms p(90)=386.2ms  p(95)=423.87ms p(99)=524.02ms max=695.88ms
+    iterations.....................: 50000 721.042741/s
+    vus............................: 200   min=200        max=200
+    vus_max........................: 200   min=200        max=200
+
+    NETWORK
+    data_received..................: 16 MB 228 kB/s
+    data_sent......................: 53 MB 758 kB/s
+
+
+

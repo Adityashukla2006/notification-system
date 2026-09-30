@@ -1,6 +1,9 @@
 # Benchmark results — Distributed Notification Delivery System
 
-Status: **bench-v1 baseline** (hot-row lock fix and enqueue-race fix applied; tenant fairness not yet fixed).
+Status: **v2**: the bench-v1 baseline (tag `bench-v1`: hot-row lock fix and
+enqueue-race fix) plus the tenant-fairness fix (per-tenant queues with
+round-robin claiming, and a per-tenant token bucket). Sections 3–7 are the
+bench-v1 baseline; section 8 is the v2 re-measurement and its before/after.
 
 Every number below was produced by a run in this benchmark session and is read
 from a file under `bench/results/`. Nothing is estimated or extrapolated. Tables
@@ -28,7 +31,7 @@ Container limits (`bench/docker-compose.yml`):
 
 | Container | CPUs | Memory | Notes |
 |---|---|---|---|
-| api | 2 | 512 MB | pgx pool 40. Per-tenant rate limit lifted (100,000,000/min) except in test 7 |
+| api | 2 | 512 MB | pgx pool 40. Per-tenant rate limit lifted except in test 7 (v1: 100,000,000/min window; v2: token bucket 100,000,000/s) |
 | worker (each) | 1 | 512 MB | 10 delivery slots per instance unless stated; pool = slots + 5 |
 | postgres | 4 | 2 GB | |
 | redis | 1 | 512 MB | |
@@ -313,7 +316,7 @@ body. Workers running (2 × 10).
 Rows from `SELECT idempotency_key, count(*) FROM notifications GROUP BY 1`; the
 409 is a k6 check (`root_group.checks`) plus a logged `CONFLICT_STATUS 409`.
 
-### Test 7 — Tenant fairness — **measured limitation**
+### Test 7 — Tenant fairness — **measured limitation in v1 (fixed in v2, see §8a)**
 
 A quiet tenant sends 20/s; a noisy tenant sends 200/s (10×) for the same 60 s.
 1 worker instance × 10 slots (≈ 148/s capacity, test 3). Latency is the quiet
@@ -353,8 +356,8 @@ backlog grew ~72/s; once the noisy tenant was cut off at ~31 s, the backlog
 drained at ~128/s and the quiet tenant's latency returned to baseline at 50 s —
 consistent with the table. Without a limit the backlog grows for the whole run.
 
-Fix: phase 2 (per-tenant queues with round-robin claiming, plus a per-tenant
-token bucket at ingestion). Before/after in §8.
+Fixed in v2 (per-tenant queues with round-robin claiming, plus a per-tenant
+token bucket at ingestion). Before/after in §8a.
 
 ### Test 8 — Burst
 
@@ -433,9 +436,140 @@ summarizer could not parse single-column tables and was fixed.
 | `_discarded/idempotency-no-409-evidence/` | Idempotency reps | Harness bug 4 |
 | `crash-evidence/` | 3 extra crash reps | Evidence for the duplicate mechanism only |
 
-## 8. Fairness fix — before/after
+## 8. v2: fairness fix — before/after
 
-*(Filled in after phase 2.)*
+Design: [`bench/DESIGN-fair-queue.md`](../DESIGN-fair-queue.md). In short:
+
+- **Per-tenant queues, round-robin claims.** Each tenant has its own Redis list;
+  a ring of active tenants is rotated by one atomic Lua script per claim, so
+  consecutive claims visit tenants in turn. The claim is still one atomic move
+  into the worker's own processing list, and every recovery path (restart
+  `Drain`, dead-worker reclaim, retry promotion, Postgres reaper) returns an
+  entry to its own tenant's list. Entries carry the tenant (`"<tenant>:<id>"`);
+  legacy bare-id entries are still drained.
+- **Token bucket per tenant** replaces the per-minute sliding window
+  (`RATE_LIMIT_RATE` tokens/s, `RATE_LIMIT_BURST`), computed in one Lua script on
+  Redis's clock. It bounds bursts, which the per-minute window could not.
+
+Tests added (all run against real Postgres/Redis with `CI=true`): round-robin
+order across tenants, a 1-item tenant served within 2 claims behind a
+1,000-item backlog, empty tenants leaving and re-joining the rotation, idle
+claims waking on enqueue, crash recovery on the tenant path (claim, no ack,
+restart `Drain`, re-claimed by another worker), legacy entries, reclaim to the
+owning tenant, token-bucket burst/refill/isolation/expiry, and config
+validation. All existing tests pass.
+
+All v2 results are in `results/v2/` (summary: `results/v2/summary.md`). Host
+free memory during the v2 runs: 30 readings, min 1,048 MB, max 2,374 MB.
+
+### 8a. Tenant fairness (headline)
+
+Same test as §4 test 7: quiet tenant 20/s, noisy tenant 200/s, 60 s, 1 worker
+instance × 10 slots, 3 reps. "Limited" is the per-minute window (6,000/min) in
+v1 and the token bucket (100/s, burst 100: the same 100/s average) in v2.
+
+| Mode | Quiet p50 ms v1 → v2 | Quiet p95 ms v1 → v2 | **Quiet p99 ms v1 → v2** | Quiet max ms v1 → v2 |
+|---|---|---|---|---|
+| Quiet alone | 69.7 → 69.9 | 92.9 → 93.1 | 98 → 97.5 | 106 → 116 |
+| + noisy, no limit | 18,044 → **87.8** | 33,467 → 118 | **34,609 → 171** | 34,902 → 485 |
+| + noisy, limited | 7,706 → **78.7** | 16,798 → 112 | **17,691 → 181** | 17,909 → 364 |
+
+v2 ranges (min–max over 3 reps): no limit p50 86.8–90.9, p99 151–197;
+limited p50 75.1–85.6, p99 118–250. v1 ranges are in §4 test 7.
+
+- With a noisy tenant at 10× its volume and **no rate limit**, the quiet
+  tenant's p99 went from **34.6 s to 171 ms**. Its p50 is 87.8 ms vs 69.9 ms
+  alone.
+- The cost moved to the tenant that caused it: in the v2 "no limit" runs the
+  noisy tenant's own latency was p50 18.2–20.8 s, p99 31.8–39.7 s
+  (`v2/fairness/unlimited-r*.latency.txt`), because its 200/s exceeds the
+  ~148/s capacity.
+- With fair queueing in place, the token bucket did not lower the quiet
+  tenant's latency further (p99 181 vs 171 ms, overlapping ranges); what it does
+  is cap the noisy tenant's intake: 6,096 (6,087–6,097) of 12,001 requests
+  accepted, the rest rejected with 429.
+- Correctness: all 9 v2 fairness runs had 0 lost and 0 duplicate sends.
+
+### 8b. Crash recovery on the new claim path
+
+Same test as §4 test 5.
+
+| Rep | Accepted | Delivered | Lost | In-flight at kill | Of those delivered | Down s | Recovery s from death | Recovery s from restart | Ids sent twice |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | 18001 | 18001 | 0 | 9 | 9 | 7.90 | 8.41 | 0.51 | 1 |
+| 2 | 17985 | 17985 | 0 | 8 | 8 | 7.25 | 7.80 | 0.55 | 0 |
+| 3 | 18001 | 18001 | 0 | 4 | 4 | 7.15 | 7.68 | 0.54 | 0 |
+
+- **0 lost** (53,987 accepted, 53,987 delivered). Every in-flight claim was
+  returned by the restarted worker's `Drain` onto its tenant's list (log lines
+  match the in-flight counts 9/8/4) and delivered 0.51–0.55 s after restart
+  (v1: 0.42–0.69 s).
+- 1 duplicate in 53,987, in the same at-least-once window as v1: its first send
+  finished at 11:12:11.737, the process died at 11:12:11.763 (26 ms later)
+  before `delivered` was written, and it was re-sent at 11:12:20.083. Not a
+  regression.
+
+### 8c. Worker scaling (regression check)
+
+| Instances | Delivered/s v1 | Delivered/s v2 | v2 efficiency |
+|---|---|---|---|
+| 1 | 148 (147–149) | 148 (144–148) | 100% |
+| 2 | 285 (285–287) | 280 (278–283) | 95% |
+| 4 | 531 (525–532) | 530 (523–532) | 90% |
+| 8 | 842 (839–852) | 868 (863–880) | 73% |
+
+No scaling regression from the per-claim Lua script at 1, 4 or 8 instances.
+At 2 instances v2 is 5/s (1.8%) lower with non-overlapping ranges; it is
+reported as measured, and the difference does not persist at 4 or 8. All 12 v2
+runs: 240,000 accepted, 240,000 delivered, 0 lost, 0 duplicate sends.
+
+### 8d. Burst (regression check)
+
+| Rep | Send duration s | Accept rate req/s | Peak ready depth | Drain s (first accepted → last delivered) | Drain after last accepted s | Lost |
+|---|---|---|---|---|---|---|
+| 1 | 58.8 | 851 | 27233 | 109.75 | 51.10 | 0 |
+| 2 | 57.1 | 876 | 27465 | 108.18 | 51.46 | 0 |
+| 3 | 69.3 | 721 | 25367 | 117.89 | 48.63 | 0 |
+
+The delivery side is unchanged (drain after the last acceptance 48.63–51.46 s
+vs 50.78–52.77 s in v1). The **accept rate was lower** than v1 (721–876 vs
+888–932 req/s). 150,000 delivered, 0 lost, 0 duplicate sends.
+
+### 8e. Ingestion (re-measured because the API path changed)
+
+The enqueue is now a Lua script and the limiter is a token-bucket script, so
+test 1 was re-run on v2 with identical steps and criteria.
+
+| Offered req/s | v1 p99 ms | v2 p99 ms | v1 reps passing | v2 reps passing | v2 achieved req/s |
+|---|---|---|---|---|---|
+| 200 | 28.8 | 23.8 | 3/3 | 3/3 | 200 |
+| 400 | 45.7 | 30.9 | 3/3 | 3/3 | 400 |
+| 600 | 128 | 75.3 | 1/3 | 3/3 | 600 |
+| 800 | 385 | 110 | 0/3 | 0/3 | 800 |
+| 1000 | 508 | 576 | 0/3 | 0/3 | 973 |
+| 1200 | 973 | 1934 | 0/3 | 0/3 | 996 |
+
+- v2 max sustained: **600 req/s** (all 3 reps) at p50 19.9 ms, p95 44.2 ms,
+  p99 75.3 ms (ranges 18.6–21.7, 34.6–47.6, 67.8–86.1). v1: 400 req/s.
+- Under overload v2 pushes less through: 996 vs 1,105 req/s achieved at 1,200
+  offered, consistent with the lower burst accept rate in 8d.
+- These are two sets of runs hours apart on a laptop with varying free memory.
+  The direction of each difference is measured; its cause (the new scripts vs
+  host conditions) was not isolated.
+
+### 8f. Idempotency (regression check, 1 rep)
+
+1 row, 1,000 × 202, 1 distinct id, changed body → 409, 1 provider send.
+Unchanged from v1.
+
+### Guarantees after the change
+
+| Guarantee | v2 evidence | Result |
+|---|---|---|
+| Zero lost | 28 verified v2 runs (fairness 9, crash 3, scaling 12, burst 3, idempotency 1) | 0 lost |
+| Duplicates only in the crash window | ledger | 1 in the crash test, root-caused; 0 elsewhere |
+| Crash recovery | in-flight claims at kill | 21 of 21 delivered after restart |
+| Scaling | §8c | no regression except −1.8% at 2 instances |
 
 ## 9. Anomalies
 
@@ -443,8 +577,10 @@ summarizer could not parse single-column tables and was fixed.
   800 had p99 from 187 to 1,426 ms across reps.
 - The single-key duplicate test did not reproduce the enqueue race that the
   many-key test showed on the same build (§3b).
-- Scaling efficiency drops to 71% at 8 instances; the limiting resource was not
-  isolated.
+- Scaling efficiency drops to 71% (v1) / 73% (v2) at 8 instances; the
+  limiting resource was not isolated.
+- v2 burst accept rate and overload throughput are lower than v1, while v2
+  sub-saturation ingestion latency is better (§8d, §8e); cause not isolated.
 
 ## 10. Limitations
 
@@ -460,3 +596,8 @@ summarizer could not parse single-column tables and was fixed.
 - **Short runs** (15–90 s per run, 3 reps). No soak test.
 - Redis runs without AOF; the Postgres reaper is the recovery path for a Redis
   loss, and that path was not exercised here.
+- Fairness is equal-share round-robin between tenants that have work; there are
+  no per-tenant weights or priorities. It was measured with 2 active tenants
+  (4 in the other tests).
+- The per-tenant Lua scripts reference keys built inside the script, which is
+  fine on a single Redis node but would need hash tags on Redis Cluster.

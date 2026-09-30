@@ -1,0 +1,24 @@
+ Container notibench-k6-run-d621c5fab629 Creating 
+ Container notibench-k6-run-d621c5fab629 Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=134.53ms min=56.08ms med=129.36ms p(90)=183.77ms p(95)=198.6ms  p(99)=243.64ms max=327.12ms
+      { expected_response:true }...: avg=134.53ms min=56.08ms med=129.36ms p(90)=183.77ms p(95)=198.6ms  p(99)=243.64ms max=327.12ms
+    http_req_failed................: 0.00%  0 out of 20000
+    http_reqs......................: 20000  735.986107/s
+
+    EXECUTION
+    iteration_duration.............: avg=135.45ms min=56.91ms med=130.28ms p(90)=184.67ms p(95)=199.35ms p(99)=245.4ms  max=327.61ms
+    iterations.....................: 20000  735.986107/s
+    vus............................: 100    min=100        max=100
+    vus_max........................: 100    min=100        max=100
+
+    NETWORK
+    data_received..................: 6.3 MB 233 kB/s
+    data_sent......................: 21 MB  770 kB/s
+
+
+

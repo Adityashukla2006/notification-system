@@ -1,0 +1,94 @@
+2026-09-30T17:13:16 free_mb=2374 [v2] start burst 1..1
+
+[1m[17:13:37] burst: 50000 as fast as possible, 4 x 10, rep 1[0m
+ Container notibench-sampler Creating 
+ Container notibench-sampler Created 
+ Container notibench-k6-run-8b3f80173201 Creating 
+ Container notibench-k6-run-8b3f80173201 Created 
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=233.55ms min=105.82ms med=221.34ms p(90)=294.64ms p(95)=323.55ms p(99)=434.59ms max=918.03ms
+      { expected_response:true }...: avg=233.55ms min=105.82ms med=221.34ms p(90)=294.64ms p(95)=323.55ms p(99)=434.59ms max=918.03ms
+    http_req_failed................: 0.00% 0 out of 50000
+    http_reqs......................: 50000 850.939194/s
+
+    EXECUTION
+    iteration_duration.............: avg=234.51ms min=106.22ms med=222.12ms p(90)=295.73ms p(95)=324.49ms p(99)=438.32ms max=933.69ms
+    iterations.....................: 50000 850.939194/s
+    vus............................: 200   min=200        max=200
+    vus_max........................: 200   min=200        max=200
+
+    NETWORK
+    data_received..................: 16 MB 269 kB/s
+    data_sent......................: 53 MB 894 kB/s
+
+
+
+-- query: bench/sql/verify.sql
+== status counts (all rows) ==
+  status   | count 
+-----------+-------
+ delivered | 50000
+
+== accepted ids vs notifications (lost = accepted_without_row + not_terminal) ==
+ responses_202 | distinct_accepted_ids | accepted_without_row | delivered | dead_lettered | not_terminal 
+---------------+-----------------------+----------------------+-----------+---------------+--------------
+         50000 |                 50000 |                    0 |     50000 |             0 |            0
+
+== rows sharing one (client_id, idempotency_key) (must be 0) ==
+ duplicated_keys 
+-----------------
+               0
+
+== duplicate deliveries: provider ledger (ground truth) ==
+ ids_sent_at_least_once | ids_sent_more_than_once | extra_sends | sent_but_not_marked_delivered 
+------------------------+-------------------------+-------------+-------------------------------
+                  50000 |                       0 |           0 |                             0
+
+ delivered_without_ledger_send 
+-------------------------------
+                             0
+
+== every duplicated send, with its full attempt history (evidence for the cause) ==
+ id | ledger_sends | status | attempt_number | outcome | started | finished 
+----+--------------+--------+----------------+---------+---------+----------
+
+== duplicate deliveries visible to Postgres ==
+ ids_with_multiple_succeeded_attempts 
+--------------------------------------
+                                    0
+
+-- query: bench/sql/latency.sql
+== e2e latency, delivered rows, ms ==
+   n   |   p50   |   p95   |   p99   |   max   
+-------+---------+---------+---------+---------
+ 50000 | 33902.7 | 49328.3 | 50656.0 | 51100.6
+
+== e2e latency by tenant, ms ==
+     tenant     |   n   |   p50   |   p95   |   p99   |   max   
+----------------+-------+---------+---------+---------+---------
+ bench-tenant-0 | 12500 | 33883.3 | 49312.0 | 50639.5 | 51072.9
+ bench-tenant-1 | 12500 | 33897.7 | 49324.4 | 50656.2 | 51095.6
+ bench-tenant-2 | 12500 | 33903.8 | 49344.5 | 50662.0 | 51099.3
+ bench-tenant-3 | 12500 | 33912.9 | 49341.0 | 50663.8 | 51100.6
+
+== provider call duration (delivery_attempts), ms ==
+ attempts | p50  | p99  
+----------+------+------
+    50000 | 52.1 | 77.9
+
+-- query: bench/sql/throughput.sql
+== throughput ==
+ total | delivered | window_s | delivered_per_s | drain_from_first_created_s | drain_after_last_created_s 
+-------+-----------+----------+-----------------+----------------------------+----------------------------
+ 50000 |     50000 |   109.61 |           456.2 |                     109.75 |                      51.10
+
+== delivered per 1s bucket ==
+ peak_1s | avg_1s_over_active_seconds 
+---------+----------------------------
+     575 |                      454.5
+
+2026-09-30T17:15:52 free_mb=1751 [v2] end burst 1..1 (exit 0)

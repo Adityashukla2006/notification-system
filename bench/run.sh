@@ -22,6 +22,9 @@ cd "$(dirname "$0")"
 export MSYS_NO_PATHCONV=1
 
 DC="docker compose"
+# RUN_TAG puts every output under results/<tag>/ (e.g. RUN_TAG=v2), so a
+# re-measurement never overwrites the committed baseline.
+RT="${RUN_TAG:+$RUN_TAG/}"
 REPS=${REPS:-3}
 mkdir -p results state
 
@@ -50,9 +53,10 @@ worker_up() {
   return 1
 }
 
-# api_up RATE_LIMIT — recreate the API with a per-tenant limit per minute.
+# api_up RATE [BURST] — recreate the API with a per-tenant token bucket:
+# RATE requests/s sustained, BURST at once (default: BURST = RATE).
 api_up() {
-  export BENCH_RATE_LIMIT=$1 BENCH_RATE_WINDOW=1m
+  export BENCH_RATE_LIMIT_RATE=$1 BENCH_RATE_LIMIT_BURST=${2:-$1}
   $DC up -d --wait --no-deps --force-recreate api >/dev/null 2>&1
 }
 
@@ -77,15 +81,22 @@ reset() {
 # through `docker exec` can emit, so values compare and count correctly.
 nocr() { tr -d '\r'; }
 
-# queue_ids prints every entry on the ready list, one per line.
-queue_ids() { redis_ --raw LRANGE notifications:queue 0 -1 | nocr | sed '/^$/d'; }
+# queue_ids prints the notification id of every ready entry, one per line:
+# every tenant's list plus the legacy single queue. Entries are
+# "<tenant>:<id>" (or a bare legacy id); only the id is printed.
+queue_ids() {
+  $DC exec -T redis sh -c 'for k in notifications:queue $(redis-cli --raw KEYS "notifications:q:*"); do redis-cli --raw LRANGE "$k" 0 -1; done'     | nocr | sed '/^$/d; s/^.*://'
+}
+
+# ready_count is the number of ready entries across all tenant lists.
+ready_count() { queue_ids | wc -l | tr -d ' '; }
 
 free_mb() {
   powershell.exe -NoProfile -Command "[math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory/1024)" | nocr
 }
 
 # mem_mark LABEL — append host free memory to results/memory.log.
-mem_mark() { echo "$(date +%FT%T) free_mb=$(free_mb) $1" | tee -a results/memory.log >&2; }
+mem_mark() { echo "$(date +%FT%T) free_mb=$(free_mb) ${RUN_TAG:+[$RUN_TAG] }$1" | tee -a results/memory.log >&2; }
 
 # mem_check — stop the suite if host free memory is below MEM_FLOOR_MB,
 # printing the largest processes so the cause is visible.
@@ -104,17 +115,17 @@ mem_check() {
 # summary, the JSON summary, and the list of accepted ids.
 k6() {
   local dir=$1 label=$2 script=$3; shift 3
-  mkdir -p "results/$dir"
+  mkdir -p "results/${RT}$dir"
   $DC --profile tools run --rm -T -e RUN="$label-$(date +%s)" "$@" k6 run --quiet \
     --summary-trend-stats 'avg,min,med,p(90),p(95),p(99),max' \
-    --summary-export "/results/$dir/$label.k6.json" \
-    --log-output "file=/results/$dir/$label.ids" --log-format raw \
-    "/scripts/$script" 2>&1 | tee "results/$dir/$label.k6.txt" >&2
+    --summary-export "/results/${RT}$dir/$label.k6.json" \
+    --log-output "file=/results/${RT}$dir/$label.ids" --log-format raw \
+    "/scripts/$script" 2>&1 | tee "results/${RT}$dir/$label.k6.txt" >&2
 }
 
 # load_accepted DIR LABEL — copy accepted ids from the k6 log into Postgres.
 load_accepted() {
-  grep '^A ' "results/$1/$2.ids" | cut -d' ' -f2 | tr -d '\r' \
+  grep '^A ' "results/${RT}$1/$2.ids" | cut -d' ' -f2 | tr -d '\r' \
     | psql_ -q -c '\copy bench_accepted(id) FROM STDIN'
 }
 
@@ -138,12 +149,12 @@ wait_terminal() {
 
 # sql DIR LABEL NAME — run bench/sql/NAME.sql, saving query and output together.
 sql() {
-  { echo "-- query: bench/sql/$3.sql"; psql_ < "sql/$3.sql"; } | tee "results/$1/$2.$3.txt" >&2
+  { echo "-- query: bench/sql/$3.sql"; psql_ < "sql/$3.sql"; } | tee "results/${RT}$1/$2.$3.txt" >&2
 }
 
 sampler_start() { $DC --profile tools run -d --name notibench-sampler sampler >/dev/null; }
 sampler_stop() { # sampler_stop DIR LABEL
-  docker logs notibench-sampler > "results/$1/$2.queue.tsv" 2>/dev/null || true
+  docker logs notibench-sampler > "results/${RT}$1/$2.queue.tsv" 2>/dev/null || true
   docker rm -f notibench-sampler >/dev/null 2>&1 || true
 }
 
@@ -205,10 +216,10 @@ t_enqueue() {
     load_accepted "$dir" "$label"
     {
       echo "-- redis, workers stopped: every push of the id is still on the ready list"
-      echo "LLEN notifications:queue = $(redis_ LLEN notifications:queue | nocr)"
+      echo "LLEN notifications:queue = $(ready_count)"
       echo "ZCARD notifications:scheduled = $(redis_ ZCARD notifications:scheduled | nocr)"
       echo "distinct ids on the queue = $(queue_ids | sort -u | wc -l)"
-    } | tee "results/$dir/$label.queue.txt" >&2
+    } | tee "results/${RT}$dir/$label.queue.txt" >&2
     sql "$dir" "$label" idempotency
   done
   # Many keys at once: KEYS keys x COPIES concurrent copies each.
@@ -223,10 +234,10 @@ t_enqueue() {
       echo "-- query: rows vs queue entries, workers stopped"
       echo "notification rows = $(psql_ -Atc 'SELECT count(*) FROM notifications')"
       echo "distinct ids in 202 responses = $(psql_ -Atc 'SELECT count(DISTINCT id) FROM bench_accepted')"
-      echo "LLEN notifications:queue (every push) = $(redis_ LLEN notifications:queue | nocr)"
+      echo "LLEN notifications:queue (every push) = $(ready_count)"
       echo "distinct ids on the queue = $(queue_ids | sort -u | wc -l)"
       echo "ids pushed more than once = $(queue_ids | sort | uniq -d | wc -l)"
-    } | tee "results/$dir/$label.queue.txt" >&2
+    } | tee "results/${RT}$dir/$label.queue.txt" >&2
   done
   export API_TAG=latest; api_up 100000000
 }
@@ -289,7 +300,7 @@ t_crash() {
   for r in $(seq "${REP_FROM:-1}" "$REPS"); do
     local label="kill-r$r" dir=${CRASH_DIR:-crash}
     worker_stop; reset; worker_up 2 "$c"
-    mkdir -p "results/$dir"
+    mkdir -p "results/${RT}$dir"
     log "crash: $rate/s for $dur, SIGKILL worker-1 at ${kill_after}s, restart after ${down_for}s, rep $r"
     ( k6 "$dir" "$label" rate.js -e RATE="$rate" -e DURATION="$dur" ) &
     local loader=$!
@@ -301,9 +312,9 @@ t_crash() {
     # What the dead process still held: every slot's processing list, read in
     # ONE exec. A docker exec per slot took ~3 s each here, which delayed the
     # restart by ~30 s and made the harness, not the system, set recovery time.
-    local inflight="results/$dir/$label.inflight"
+    local inflight="results/${RT}$dir/$label.inflight"
     $DC exec -T redis sh -c "for k in \$(redis-cli --raw KEYS 'notifications:processing:$host-*'); do redis-cli --raw LRANGE \"\$k\" 0 -1; done" \
-      | nocr | sed '/^$/d' > "$inflight"
+      | nocr | sed '/^$/d; s/^.*://' > "$inflight"
     log "killed $host at $t_kill with $(wc -l < "$inflight") claims in flight"
     # Restart down_for seconds after the kill, not after the capture.
     local left=$((down_for - (SECONDS - killed_at)))
@@ -338,7 +349,7 @@ t_crash() {
         FROM inflight i LEFT JOIN notifications n USING (id);" < "$inflight"
       echo "-- worker-1 recovery log lines"
       docker logs notibench-worker-1 2>&1 | grep -E 'recovered claims|reclaimed claims|recovered stranded' || echo "(none)"
-    } | tee "results/$dir/$label.recovery.txt" >&2
+    } | tee "results/${RT}$dir/$label.recovery.txt" >&2
   done
   worker_stop
 }
@@ -365,15 +376,17 @@ t_idempotency() {
 #    the rate limit lifted, then with a per-tenant limit below the noisy rate.
 t_fairness() {
   local c=${FAIR_CONC:-10} quiet=${FAIR_QUIET:-20} noisy=${FAIR_NOISY:-200} dur=${FAIR_DURATION:-60s}
-  local limit=${FAIR_LIMIT_PER_MIN:-6000}
+  # Token bucket for the "limited" mode: the same 100/s average as bench-v1's
+  # 6,000/min window, but with the burst bounded to 1 s of traffic.
+  local limit=${FAIR_LIMIT_RATE:-100} burst=${FAIR_LIMIT_BURST:-100}
   sim 50ms 25ms 0
   for r in $(seq "${REP_FROM:-1}" "$REPS"); do
     for mode in baseline unlimited limited; do
-      local n=$noisy lim=100000000
+      local n=$noisy lim=100000000 b=100000000
       [ "$mode" = baseline ] && n=0
-      [ "$mode" = limited ] && lim=$limit
-      api_up "$lim"; worker_stop; reset; worker_up 1 "$c"
-      log "fairness $mode: quiet $quiet/s, noisy $n/s, limit $lim/min, rep $r"
+      [ "$mode" = limited ] && lim=$limit && b=$burst
+      api_up "$lim" "$b"; worker_stop; reset; worker_up 1 "$c"
+      log "fairness $mode: quiet $quiet/s, noisy $n/s, token bucket $lim/s burst $b, rep $r"
       k6 fairness "$mode-r$r" fairness.js -e QUIET_RATE="$quiet" -e NOISY_RATE="$n" -e DURATION="$dur"
       wait_terminal
       finish fairness "$mode-r$r"
@@ -420,7 +433,7 @@ env_info() {
     echo "== redis settings =="
     for k in appendonly save maxmemory; do redis_ CONFIG GET "$k" | tr -d '\r' | paste - -; done
     echo "== app settings (bench/docker-compose.yml) =="
-    echo "  api: POSTGRES_MAX_CONNS=40, rate limit lifted (100000000/min) except in the fairness test"
+    echo "  api: POSTGRES_MAX_CONNS=40, rate limit lifted (token bucket 100000000/s) except in the fairness test"
     echo "  worker: WORKER_CONCURRENCY per test (default 10 slots/instance), POSTGRES_MAX_CONNS=slots+5, CLAIM_TIMEOUT=1s"
     echo "  worker: RETRY_BASE=1s RETRY_MAX=5m, max_attempts=5 (column default), LIVENESS_TTL=30s, RECLAIM_EVERY=30s"
     echo "  provider: simulated, latency 50ms +/- 25ms uniform unless a test says otherwise, ledger on"

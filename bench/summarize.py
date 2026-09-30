@@ -17,7 +17,9 @@ import sys
 
 sys.stdout.reconfigure(encoding="utf-8")
 
-RES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
+# Optional argument: a results subdirectory (e.g. "v2") to summarize instead
+# of the bench-v1 baseline in results/ itself.
+RES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results", *sys.argv[1:2])
 out = []
 
 
@@ -128,7 +130,7 @@ for tag in ("before", "latest"):
           f"(LLEN = rows, so none) | {len(fs)} |")
 
 # ---------------------------------------------------------------- memory
-if os.path.exists(os.path.join(RES, "memory.log")):
+if len(sys.argv) < 2 and os.path.exists(os.path.join(RES, "memory.log")):
     p()
     p("## Host free memory at the start and end of each test (results/memory.log)")
     p()
