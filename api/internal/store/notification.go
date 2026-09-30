@@ -158,6 +158,41 @@ RETURNING created_at, updated_at`
 	return Notification{}, false, fmt.Errorf("inserting notification: %w", err)
 }
 
+// ClaimHandOff atomically moves a notification from pending to queued and
+// reports whether this caller made that move. Only the caller that gets true
+// may put the notification on the queue.
+//
+// This is what keeps concurrent duplicates of one request from enqueueing the
+// same id several times. Each duplicate's INSERT loses to the first and reads
+// the row back; until the first request finished, those reads all saw
+// "pending", and each one pushed the id. Several copies on the queue meant
+// several workers could deliver it at once. Postgres lets exactly one
+// transaction change the row out of pending, so exactly one caller enqueues.
+//
+// It also runs BEFORE the push, not after. Marking a row queued after pushing
+// it could overwrite a worker that had already claimed it and marked it
+// delivering, moving the row backwards.
+func (s *Store) ClaimHandOff(ctx context.Context, id uuid.UUID) (bool, error) {
+	const q = `UPDATE notifications SET status = $2, updated_at = now() WHERE id = $1 AND status = $3`
+	tag, err := s.pool.Exec(ctx, q, id, StatusQueued, StatusPending)
+	if err != nil {
+		return false, fmt.Errorf("claiming hand-off of notification %s: %w", id, err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// ReleaseHandOff returns a claimed notification to pending after its hand-off
+// to Redis failed, so a client retry with the same idempotency key can claim
+// and enqueue it again. It only moves a row that is still queued; if that is
+// no longer true, someone else has made progress and there is nothing to undo.
+func (s *Store) ReleaseHandOff(ctx context.Context, id uuid.UUID) error {
+	const q = `UPDATE notifications SET status = $2, updated_at = now() WHERE id = $1 AND status = $3`
+	if _, err := s.pool.Exec(ctx, q, id, StatusPending, StatusQueued); err != nil {
+		return fmt.Errorf("releasing hand-off of notification %s: %w", id, err)
+	}
+	return nil
+}
+
 // GetByID returns the notification with the given id, or ErrNotFound.
 func (s *Store) GetByID(ctx context.Context, id uuid.UUID) (Notification, error) {
 	const q = `SELECT` + selectColumns + `FROM notifications WHERE id = $1`

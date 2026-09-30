@@ -24,7 +24,8 @@ import (
 // tested with a fake.
 type Store interface {
 	Create(ctx context.Context, n store.Notification) (store.Notification, bool, error)
-	UpdateStatus(ctx context.Context, id uuid.UUID, status store.Status) error
+	ClaimHandOff(ctx context.Context, id uuid.UUID) (bool, error)
+	ReleaseHandOff(ctx context.Context, id uuid.UUID) error
 }
 
 // Enqueuer hands a persisted notification off to the worker for immediate
@@ -122,21 +123,33 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Result, error) {
 		return Result{Notification: stored, Outcome: OutcomeConflict}, nil
 	}
 
-	// A freshly created row is pending; a replay may be pending or already
-	// queued. Hand off only while still pending so retries don't double-queue.
+	// A freshly created row is pending; a replay may read it as pending too,
+	// either because an earlier hand-off failed or because a concurrent
+	// duplicate is mid-hand-off right now. Reading "pending" is therefore not
+	// permission to enqueue: only the caller that moves the row out of pending
+	// may, so concurrent duplicates put the id on the queue exactly once.
 	if stored.Status == store.StatusPending {
-		if err := s.handOff(ctx, stored); err != nil {
-			// Persisted but not handed off. Surface the error so the client
-			// retries; idempotency guarantees the retry re-queues the same
-			// row without creating a duplicate.
-			return Result{}, err
+		claimed, err := s.store.ClaimHandOff(ctx, stored.ID)
+		if err != nil {
+			// Nothing was enqueued and the row is still pending, so a client
+			// retry with the same key can claim it.
+			return Result{}, fmt.Errorf("claiming hand-off: %w", err)
 		}
-		if err := s.store.UpdateStatus(ctx, stored.ID, store.StatusQueued); err != nil {
-			// The id is on the queue, which is what matters for delivery; the
-			// status write is bookkeeping. Log and proceed rather than fail a
-			// request whose work is already handed off.
-			s.logger.Warn("failed to mark notification queued", "id", stored.ID, "error", err)
+		if claimed {
+			if err := s.handOff(ctx, stored); err != nil {
+				// Persisted but not handed off. Put the row back to pending so
+				// the client's retry with the same key can claim it again. If
+				// even that fails, the row sits queued with no queue entry, and
+				// the worker's reaper recovers it from Postgres.
+				if relErr := s.store.ReleaseHandOff(ctx, stored.ID); relErr != nil {
+					s.logger.Warn("failed to release hand-off; the reaper will recover it",
+						"id", stored.ID, "error", relErr)
+				}
+				return Result{}, err
+			}
 		}
+		// Claimed and handed off, or a concurrent duplicate got there first:
+		// either way the notification is past pending.
 		stored.Status = store.StatusQueued
 	}
 

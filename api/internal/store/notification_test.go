@@ -10,6 +10,8 @@ import (
 	"reflect"
 	"runtime"
 	"sort"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -326,5 +328,85 @@ func TestGetByIDNotFound(t *testing.T) {
 	_, err := s.GetByID(context.Background(), uuid.New())
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("error = %v, want ErrNotFound", err)
+	}
+}
+
+// TestClaimHandOffExactlyOnce races many callers for one pending row, the way
+// concurrent duplicate requests do. Exactly one may win, or the id would be
+// enqueued once per winner.
+func TestClaimHandOffExactlyOnce(t *testing.T) {
+	s := requireStore(t)
+	ctx := context.Background()
+	n, _, err := s.Create(ctx, validNotification(seedClient(t, s)))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	const callers = 50
+	var wins atomic.Int32
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			claimed, err := s.ClaimHandOff(ctx, n.ID)
+			if err != nil {
+				t.Errorf("ClaimHandOff: %v", err)
+				return
+			}
+			if claimed {
+				wins.Add(1)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	if got := wins.Load(); got != 1 {
+		t.Fatalf("%d callers claimed the hand-off, want exactly 1", got)
+	}
+	got, err := s.GetByID(ctx, n.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.Status != StatusQueued {
+		t.Errorf("status = %q, want queued", got.Status)
+	}
+}
+
+func TestReleaseHandOff(t *testing.T) {
+	tests := []struct {
+		name string
+		from Status
+		want Status
+	}{
+		{name: "queued returns to pending", from: StatusQueued, want: StatusPending},
+		{name: "a worker's progress is not undone", from: StatusDelivering, want: StatusDelivering},
+		{name: "terminal rows are untouched", from: StatusDelivered, want: StatusDelivered},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := requireStore(t)
+			ctx := context.Background()
+			n, _, err := s.Create(ctx, validNotification(seedClient(t, s)))
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			if err := s.UpdateStatus(ctx, n.ID, tt.from); err != nil {
+				t.Fatalf("UpdateStatus: %v", err)
+			}
+			if err := s.ReleaseHandOff(ctx, n.ID); err != nil {
+				t.Fatalf("ReleaseHandOff: %v", err)
+			}
+			got, err := s.GetByID(ctx, n.ID)
+			if err != nil {
+				t.Fatalf("GetByID: %v", err)
+			}
+			if got.Status != tt.want {
+				t.Errorf("status = %q, want %q", got.Status, tt.want)
+			}
+		})
 	}
 }

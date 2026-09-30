@@ -20,6 +20,8 @@ type fakeStore struct {
 	byKey     map[string]store.Notification // client_id+"|"+idempotency_key -> row
 	byID      map[uuid.UUID]store.Notification
 	createErr error
+	claimErr  error
+	releases  int
 }
 
 func newFakeStore() *fakeStore {
@@ -49,11 +51,9 @@ func (f *fakeStore) Create(_ context.Context, n store.Notification) (store.Notif
 	return n, true, nil
 }
 
-func (f *fakeStore) UpdateStatus(_ context.Context, id uuid.UUID, status store.Status) error {
-	n, ok := f.byID[id]
-	if !ok {
-		return store.ErrNotFound
-	}
+// setStatus updates both indexes, as a committed write would.
+func (f *fakeStore) setStatus(id uuid.UUID, status store.Status) {
+	n := f.byID[id]
 	n.Status = status
 	f.byID[id] = n
 	for k, v := range f.byKey {
@@ -61,6 +61,30 @@ func (f *fakeStore) UpdateStatus(_ context.Context, id uuid.UUID, status store.S
 			v.Status = status
 			f.byKey[k] = v
 		}
+	}
+}
+
+// ClaimHandOff mirrors the store's conditional UPDATE: it succeeds only while
+// the committed row (byID) is still pending. Create returns rows from byKey, so
+// a test can make that read stale to model a concurrent duplicate.
+func (f *fakeStore) ClaimHandOff(_ context.Context, id uuid.UUID) (bool, error) {
+	if f.claimErr != nil {
+		return false, f.claimErr
+	}
+	n, ok := f.byID[id]
+	if !ok || n.Status != store.StatusPending {
+		return false, nil
+	}
+	f.setStatus(id, store.StatusQueued)
+	return true, nil
+}
+
+// ReleaseHandOff mirrors the store: queued goes back to pending, anything else
+// is left alone.
+func (f *fakeStore) ReleaseHandOff(_ context.Context, id uuid.UUID) error {
+	f.releases++
+	if n, ok := f.byID[id]; ok && n.Status == store.StatusQueued {
+		f.setStatus(id, store.StatusPending)
 	}
 	return nil
 }
@@ -301,6 +325,69 @@ func TestServiceValidation(t *testing.T) {
 			}
 			if len(q.enqueued) != 0 {
 				t.Error("enqueued despite validation failure")
+			}
+		})
+	}
+}
+
+// TestServiceCreateHandOffClaim covers who may enqueue a row read as pending.
+// Only the caller that moves it out of pending pushes it, which is what keeps
+// concurrent duplicates of one request from enqueueing the same id twice.
+func TestServiceCreateHandOffClaim(t *testing.T) {
+	tests := []struct {
+		name string
+		// staleReplay seeds the row as already claimed by a concurrent
+		// duplicate while this request's read still says pending.
+		staleReplay  bool
+		claimErr     error
+		queueErr     error
+		wantErr      bool
+		wantEnqueued int
+		wantStatus   store.Status // committed row status afterwards
+		wantReleases int
+	}{
+		{name: "new row: claims and enqueues", wantEnqueued: 1, wantStatus: store.StatusQueued},
+		{name: "concurrent duplicate already claimed: no enqueue", staleReplay: true, wantStatus: store.StatusQueued},
+		{name: "claim fails: nothing enqueued, row stays pending", claimErr: errors.New("pg down"), wantErr: true, wantStatus: store.StatusPending},
+		{name: "push fails: claim released so a retry can enqueue", queueErr: errors.New("redis down"), wantErr: true, wantStatus: store.StatusPending, wantReleases: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := newFakeStore()
+			st.claimErr = tt.claimErr
+			q := &fakeQueue{err: tt.queueErr}
+			svc := newService(st, q)
+			in := validInput()
+
+			if tt.staleReplay {
+				row := store.Notification{
+					ID: uuid.New(), ClientID: in.ClientID, IdempotencyKey: in.IdempotencyKey,
+					Channel: store.Channel(in.Channel), Recipient: in.Recipient,
+					Payload: in.Payload, Status: store.StatusPending,
+				}
+				st.byKey[in.ClientID.String()+"|"+in.IdempotencyKey] = row // what this request reads
+				row.Status = store.StatusQueued
+				st.byID[row.ID] = row // what is actually committed
+			}
+
+			res, err := svc.Create(context.Background(), in)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("Create error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && res.Notification.Status != store.StatusQueued {
+				t.Errorf("response status = %q, want queued", res.Notification.Status)
+			}
+			if len(q.enqueued) != tt.wantEnqueued {
+				t.Errorf("enqueued %d times, want %d", len(q.enqueued), tt.wantEnqueued)
+			}
+			if st.releases != tt.wantReleases {
+				t.Errorf("releases = %d, want %d", st.releases, tt.wantReleases)
+			}
+			for _, n := range st.byID {
+				if n.Status != tt.wantStatus {
+					t.Errorf("committed status = %q, want %q", n.Status, tt.wantStatus)
+				}
 			}
 		})
 	}
