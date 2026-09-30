@@ -88,11 +88,28 @@ WHERE id = $1`
 	return k, nil
 }
 
-// TouchAPIKeyLastUsed records that a key was just used to authenticate. At
-// scale this write would move off the request hot path (batched or sampled);
-// for now it is a small inline update.
+// lastUsedGranularity is how stale last_used_at may get before a request
+// refreshes it.
+const lastUsedGranularity = "1 minute"
+
+// TouchAPIKeyLastUsed records that a key was recently used to authenticate,
+// at a granularity of lastUsedGranularity.
+//
+// It writes only when the stored value is older than that. Every request with
+// the same key targets the same row, and an unconditional UPDATE made them all
+// queue on that row's lock, one durable commit at a time: a load test showed
+// ingestion capped near 170 req/s for a single key. A row that fails the WHERE
+// clause is neither locked nor written, so almost every request now skips the
+// write entirely. Minute precision is enough for what the column answers: "is
+// this key still in use?"
+//
+// At larger scale this would move off the request path entirely (sampled or
+// batched), which also removes the per-request read of the row.
 func (s *Store) TouchAPIKeyLastUsed(ctx context.Context, keyID uuid.UUID) error {
-	const q = `UPDATE api_keys SET last_used_at = now() WHERE id = $1`
+	const q = `
+UPDATE api_keys SET last_used_at = now()
+WHERE id = $1
+  AND (last_used_at IS NULL OR last_used_at < now() - interval '` + lastUsedGranularity + `')`
 	if _, err := s.pool.Exec(ctx, q, keyID); err != nil {
 		return fmt.Errorf("updating api key last_used_at: %w", err)
 	}

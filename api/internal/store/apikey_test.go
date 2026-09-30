@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -107,4 +108,48 @@ func mustSecret(t *testing.T, token string) string {
 		t.Fatalf("ParseToken: %v", err)
 	}
 	return secret
+}
+
+// TestTouchAPIKeyLastUsedSkipsRecentWrite guards the fix for ingestion being
+// serialized on the api_keys row: a key touched within the granularity window
+// must not be written again.
+func TestTouchAPIKeyLastUsedSkipsRecentWrite(t *testing.T) {
+	tests := []struct {
+		name      string
+		age       time.Duration
+		wantWrite bool
+	}{
+		{name: "recent touch is kept", age: 10 * time.Second, wantWrite: false},
+		{name: "stale touch is refreshed", age: 2 * time.Minute, wantWrite: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := requireStore(t)
+			ctx := context.Background()
+			client, err := s.CreateClient(ctx, "acme")
+			if err != nil {
+				t.Fatalf("CreateClient: %v", err)
+			}
+			gen, _ := auth.GenerateKey()
+			if _, err := s.CreateAPIKey(ctx, gen.KeyID, client.ID, gen.SecretHash, ""); err != nil {
+				t.Fatalf("CreateAPIKey: %v", err)
+			}
+			seeded := time.Now().Add(-tt.age).UTC().Truncate(time.Microsecond)
+			if _, err := testPool.Exec(ctx, `UPDATE api_keys SET last_used_at = $2 WHERE id = $1`, gen.KeyID, seeded); err != nil {
+				t.Fatalf("seeding last_used_at: %v", err)
+			}
+
+			if err := s.TouchAPIKeyLastUsed(ctx, gen.KeyID); err != nil {
+				t.Fatalf("TouchAPIKeyLastUsed: %v", err)
+			}
+
+			got, err := s.GetAPIKeyByID(ctx, gen.KeyID)
+			if err != nil {
+				t.Fatalf("GetAPIKeyByID: %v", err)
+			}
+			if wrote := !got.LastUsedAt.Equal(seeded); wrote != tt.wantWrite {
+				t.Errorf("wrote = %v (last_used_at %v, seeded %v), want %v", wrote, got.LastUsedAt, seeded, tt.wantWrite)
+			}
+		})
+	}
 }
