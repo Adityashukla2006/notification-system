@@ -79,9 +79,13 @@ func TestReapStuck(t *testing.T) {
 			}
 
 			reaped := false
-			for _, id := range ids {
-				if id == n.ID {
+			for _, r := range ids {
+				if r.ID == n.ID {
 					reaped = true
+					// The per-tenant queue needs the owner to requeue it.
+					if r.ClientID != n.ClientID {
+						t.Errorf("reaped client_id = %s, want %s", r.ClientID, n.ClientID)
+					}
 				}
 			}
 			if reaped != tt.wantReap {
@@ -166,6 +170,6 @@ func TestReapStuckEmptyReturnsEmptySlice(t *testing.T) {
 	}
 }
 
-func containsID(ids []uuid.UUID, want uuid.UUID) bool {
-	return slices.Contains(ids, want)
+func containsID(refs []Ref, want uuid.UUID) bool {
+	return slices.ContainsFunc(refs, func(r Ref) bool { return r.ID == want })
 }

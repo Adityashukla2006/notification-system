@@ -74,7 +74,7 @@ func runReset(args []string) error {
 		return fmt.Errorf("vacuuming: %w", err)
 	}
 
-	for _, pattern := range []string{"notifications:queue", "notifications:scheduled", "notifications:processing:*", "ratelimit:*"} {
+	for _, pattern := range []string{"notifications:queue", "notifications:q:*", "notifications:tenants:*", "notifications:doorbell", "notifications:scheduled", "notifications:processing:*", "ratelimit:*"} {
 		iter := e.rdb.Scan(ctx, 0, pattern, 1000).Iterator()
 		for iter.Next(ctx) {
 			if err := e.rdb.Del(ctx, iter.Val()).Err(); err != nil {

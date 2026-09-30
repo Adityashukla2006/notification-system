@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/Adityashukla2006/notification-system/api/internal/queue"
 	"github.com/Adityashukla2006/notification-system/api/internal/store"
 )
 
@@ -92,14 +93,16 @@ func (f *fakeStore) ReleaseHandOff(_ context.Context, id uuid.UUID) error {
 // fakeQueue records enqueued ids and can be made to fail.
 type fakeQueue struct {
 	enqueued []uuid.UUID
+	tenants  []uuid.UUID
 	err      error
 }
 
-func (q *fakeQueue) Enqueue(_ context.Context, id uuid.UUID) error {
+func (q *fakeQueue) Enqueue(_ context.Context, it queue.Item) error {
 	if q.err != nil {
 		return q.err
 	}
-	q.enqueued = append(q.enqueued, id)
+	q.enqueued = append(q.enqueued, it.ID)
+	q.tenants = append(q.tenants, it.Tenant)
 	return nil
 }
 
@@ -113,11 +116,11 @@ func newFakeScheduler() *fakeScheduler {
 	return &fakeScheduler{scheduled: map[uuid.UUID]time.Time{}}
 }
 
-func (s *fakeScheduler) Schedule(_ context.Context, id uuid.UUID, at time.Time) error {
+func (s *fakeScheduler) Schedule(_ context.Context, it queue.Item, at time.Time) error {
 	if s.err != nil {
 		return s.err
 	}
-	s.scheduled[id] = at
+	s.scheduled[it.ID] = at
 	return nil
 }
 
@@ -199,6 +202,10 @@ func TestServiceCreateAcceptsAndEnqueues(t *testing.T) {
 	}
 	if len(q.enqueued) != 1 || q.enqueued[0] != res.Notification.ID {
 		t.Errorf("enqueued = %v, want [%v]", q.enqueued, res.Notification.ID)
+	}
+	// Work is queued per tenant, so the client id must travel with it.
+	if len(q.tenants) != 1 || q.tenants[0] != res.Notification.ClientID {
+		t.Errorf("enqueued under tenant %v, want %v", q.tenants, res.Notification.ClientID)
 	}
 }
 

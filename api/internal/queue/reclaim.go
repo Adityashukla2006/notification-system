@@ -15,7 +15,52 @@ import (
 // worker's in-flight claims have been abandoned.
 const livenessKeyPrefix = "notifications:worker:"
 
-// Reclaimer returns abandoned claims to the ready queue.
+// requeueScript moves the OLDEST entry of a processing list back to the FRONT
+// of its own tenant's queue (the end claims read from), re-activates that
+// tenant in the rotation, and rings the doorbell — all atomically, so an entry
+// is never on neither list. It returns the entry, or false when the list is
+// empty.
+//
+// KEYS: 1 processing list, 2 ring, 3 active set, 4 doorbell
+// ARGV: 1 tenant list prefix, 2 nil tenant (for legacy bare-id entries),
+// 3 doorbell cap
+var requeueScript = redis.NewScript(`
+local entry = redis.call('RPOP', KEYS[1])
+if not entry then return false end
+local sep = string.find(entry, ':', 1, true)
+local tenant = ARGV[2]
+if sep then tenant = string.sub(entry, 1, sep - 1) end
+redis.call('RPUSH', ARGV[1] .. tenant, entry)
+if redis.call('SADD', KEYS[3], tenant) == 1 then
+  redis.call('RPUSH', KEYS[2], tenant)
+end
+redis.call('RPUSH', KEYS[4], '1')
+redis.call('LTRIM', KEYS[4], -tonumber(ARGV[3]), -1)
+return entry
+`)
+
+// requeueAll empties a processing list back onto the tenant queues, oldest
+// claim first, and reports how many entries moved.
+func requeueAll(ctx context.Context, client *redis.Client, processingKey string) (int, error) {
+	moved := 0
+	for {
+		err := requeueScript.Run(ctx, client,
+			[]string{processingKey, ringKey, activeKey, doorbellKey},
+			tenantQueuePrefix, nilTenant, doorbellCap).Err()
+		if errors.Is(err, redis.Nil) {
+			return moved, nil
+		}
+		if err != nil {
+			return moved, fmt.Errorf("requeueing from %s: %w", processingKey, err)
+		}
+		moved++
+	}
+}
+
+// nilTenant is the tenant legacy bare-id entries are filed under.
+var nilTenant = tenantOf("")
+
+// Reclaimer returns abandoned claims to their tenants' queues.
 //
 // It exists because a reliable claim is only half a guarantee. Moving an id to
 // a processing list means a crashed worker cannot LOSE it — but on its own,
@@ -28,7 +73,6 @@ const livenessKeyPrefix = "notifications:worker:"
 // the worker stopped refreshing it, and its claims are fair game.
 type Reclaimer struct {
 	client           *redis.Client
-	queueKey         string
 	processingPrefix string
 	livenessPrefix   string
 }
@@ -37,7 +81,6 @@ type Reclaimer struct {
 func NewReclaimer(client *redis.Client) *Reclaimer {
 	return &Reclaimer{
 		client:           client,
-		queueKey:         defaultQueueKey,
 		processingPrefix: processingKeyPrefix,
 		livenessPrefix:   livenessKeyPrefix,
 	}
@@ -58,11 +101,11 @@ func (r *Reclaimer) Heartbeat(ctx context.Context, workerID string, ttl time.Dur
 }
 
 // ReclaimAbandoned scans for processing lists whose owning worker is no longer
-// alive and moves their claims back onto the ready queue. It returns the number
-// of notifications reclaimed and the number of dead workers drained.
+// alive and moves their claims back onto their tenants' queues. It returns the
+// number of notifications reclaimed and the number of dead workers drained.
 //
-// Safe to run concurrently on every worker: each id is moved with an atomic
-// LMOVE, so two reclaimers racing on the same list cannot both move the same
+// Safe to run concurrently on every worker: each entry is moved by an atomic
+// script, so two reclaimers racing on the same list cannot both move the same
 // entry.
 func (r *Reclaimer) ReclaimAbandoned(ctx context.Context) (notifications int, workers int, err error) {
 	var cursor uint64
@@ -83,7 +126,7 @@ func (r *Reclaimer) ReclaimAbandoned(ctx context.Context) (notifications int, wo
 				continue
 			}
 
-			moved, err := r.drain(ctx, key)
+			moved, err := requeueAll(ctx, r.client, key)
 			if err != nil {
 				return notifications, workers, err
 			}
@@ -109,30 +152,8 @@ func (r *Reclaimer) isAlive(ctx context.Context, workerID string) (bool, error) 
 	return n > 0, nil
 }
 
-// drain moves every entry from a processing list back onto the ready queue,
-// oldest claim first, and reports how many moved.
-//
-// Entries are taken from the RIGHT of the processing list (the oldest claim)
-// and pushed to the RIGHT of the ready queue — the end that Claim reads from.
-// Reclaimed work has already waited through a worker's death, so it goes to the
-// front rather than behind everything enqueued since.
-func (r *Reclaimer) drain(ctx context.Context, processingKey string) (int, error) {
-	moved := 0
-	for {
-		_, err := r.client.LMove(ctx, processingKey, r.queueKey, "RIGHT", "RIGHT").Result()
-		if errors.Is(err, redis.Nil) {
-			// The list is empty; nothing left to reclaim.
-			return moved, nil
-		}
-		if err != nil {
-			return moved, fmt.Errorf("reclaiming from %s: %w", processingKey, err)
-		}
-		moved++
-	}
-}
-
-// Drain returns this consumer's own outstanding claims to the ready queue,
-// reporting how many moved.
+// Drain returns this consumer's own outstanding claims to their tenants'
+// queues, reporting how many moved.
 //
 // A worker calls this at startup, before claiming anything new. Whatever is on
 // its own processing list at that moment is by definition left over from a
@@ -140,15 +161,9 @@ func (r *Reclaimer) drain(ctx context.Context, processingKey string) (int, error
 // — so it can recover its own work immediately, without waiting for a liveness
 // key to expire.
 func (c *Consumer) Drain(ctx context.Context) (int, error) {
-	moved := 0
-	for {
-		_, err := c.client.LMove(ctx, c.processingKey, c.queueKey, "RIGHT", "RIGHT").Result()
-		if errors.Is(err, redis.Nil) {
-			return moved, nil
-		}
-		if err != nil {
-			return moved, fmt.Errorf("draining own processing list: %w", err)
-		}
-		moved++
+	moved, err := requeueAll(ctx, c.client, c.processingKey)
+	if err != nil {
+		return moved, fmt.Errorf("draining own processing list: %w", err)
 	}
+	return moved, nil
 }

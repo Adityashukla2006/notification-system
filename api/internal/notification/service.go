@@ -16,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/Adityashukla2006/notification-system/api/internal/queue"
 	"github.com/Adityashukla2006/notification-system/api/internal/store"
 )
 
@@ -29,15 +30,15 @@ type Store interface {
 }
 
 // Enqueuer hands a persisted notification off to the worker for immediate
-// delivery.
+// delivery, on its tenant's queue.
 type Enqueuer interface {
-	Enqueue(ctx context.Context, id uuid.UUID) error
+	Enqueue(ctx context.Context, it queue.Item) error
 }
 
 // Scheduler defers a notification until its scheduled time, at which point a
 // worker's promoter moves it onto the ready queue.
 type Scheduler interface {
-	Schedule(ctx context.Context, id uuid.UUID, at time.Time) error
+	Schedule(ctx context.Context, it queue.Item, at time.Time) error
 }
 
 // Outcome describes what happened to a Create call, so the HTTP layer can pick
@@ -168,13 +169,15 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Result, error) {
 // silently ignoring the time the client asked for — so a notification that is
 // not yet due must never touch the ready queue.
 func (s *Service) handOff(ctx context.Context, n store.Notification) error {
+	// The client is the tenant: work is queued and claimed per tenant.
+	it := queue.Item{Tenant: n.ClientID, ID: n.ID}
 	if n.ScheduledAt.After(s.now()) {
-		if err := s.scheduler.Schedule(ctx, n.ID, n.ScheduledAt); err != nil {
+		if err := s.scheduler.Schedule(ctx, it, n.ScheduledAt); err != nil {
 			return fmt.Errorf("scheduling notification: %w", err)
 		}
 		return nil
 	}
-	if err := s.queue.Enqueue(ctx, n.ID); err != nil {
+	if err := s.queue.Enqueue(ctx, it); err != nil {
 		return fmt.Errorf("enqueueing notification: %w", err)
 	}
 	return nil

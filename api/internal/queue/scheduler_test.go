@@ -8,12 +8,20 @@ import (
 	"github.com/google/uuid"
 )
 
-// clearScheduler wipes the keys a scheduler test touches.
+// clearScheduler wipes every queue key, including the schedule.
 func clearScheduler(t *testing.T, s *Scheduler) {
 	t.Helper()
-	if err := s.client.Del(context.Background(), s.scheduledKey, s.queueKey).Err(); err != nil {
-		t.Fatalf("clearing keys: %v", err)
+	clearAll(t, s.client)
+}
+
+// tenantQueue returns one tenant's ready list.
+func tenantQueue(t *testing.T, s *Scheduler, tenant uuid.UUID) []string {
+	t.Helper()
+	got, err := s.client.LRange(context.Background(), tenantQueuePrefix+tenant.String(), 0, -1).Result()
+	if err != nil {
+		t.Fatalf("LRange: %v", err)
 	}
+	return got
 }
 
 // TestPromoteDueOnlyPromotesWhatIsDue is the core scheduling property: a
@@ -26,8 +34,9 @@ func TestPromoteDueOnlyPromotesWhatIsDue(t *testing.T) {
 	clearScheduler(t, s)
 
 	now := time.Now()
-	dueID := uuid.New()
-	futureID := uuid.New()
+	tenant := uuid.New()
+	dueID := Item{Tenant: tenant, ID: uuid.New()}
+	futureID := Item{Tenant: tenant, ID: uuid.New()}
 
 	if err := s.Schedule(ctx, dueID, now.Add(-time.Minute)); err != nil {
 		t.Fatalf("Schedule due: %v", err)
@@ -44,12 +53,10 @@ func TestPromoteDueOnlyPromotesWhatIsDue(t *testing.T) {
 		t.Errorf("promoted %d, want 1", n)
 	}
 
-	queued, err := client.LRange(ctx, s.queueKey, 0, -1).Result()
-	if err != nil {
-		t.Fatalf("LRange: %v", err)
-	}
+	// Promoted onto the owning tenant's queue, not a shared one.
+	queued := tenantQueue(t, s, tenant)
 	if len(queued) != 1 || queued[0] != dueID.String() {
-		t.Errorf("ready queue = %v, want exactly [%s]", queued, dueID)
+		t.Errorf("tenant queue = %v, want exactly [%s]", queued, dueID)
 	}
 
 	// The future one must still be waiting on the schedule.
@@ -71,7 +78,7 @@ func TestPromoteDueIsIdempotentAcrossWorkers(t *testing.T) {
 	s := NewScheduler(client)
 	clearScheduler(t, s)
 
-	id := uuid.New()
+	id := Item{Tenant: uuid.New(), ID: uuid.New()}
 	if err := s.Schedule(ctx, id, time.Now().Add(-time.Minute)); err != nil {
 		t.Fatalf("Schedule: %v", err)
 	}
@@ -90,12 +97,8 @@ func TestPromoteDueIsIdempotentAcrossWorkers(t *testing.T) {
 	if total != 1 {
 		t.Errorf("promoted %d times in total, want exactly 1", total)
 	}
-	length, err := client.LLen(ctx, s.queueKey).Result()
-	if err != nil {
-		t.Fatalf("LLen: %v", err)
-	}
-	if length != 1 {
-		t.Errorf("ready queue length = %d, want 1", length)
+	if length := len(tenantQueue(t, s, id.Tenant)); length != 1 {
+		t.Errorf("tenant queue length = %d, want 1", length)
 	}
 }
 
@@ -109,7 +112,7 @@ func TestScheduleOverwritesDueTime(t *testing.T) {
 	s := NewScheduler(client)
 	clearScheduler(t, s)
 
-	id := uuid.New()
+	id := Item{Tenant: uuid.New(), ID: uuid.New()}
 	if err := s.Schedule(ctx, id, time.Now().Add(time.Hour)); err != nil {
 		t.Fatalf("Schedule: %v", err)
 	}
@@ -144,7 +147,7 @@ func TestPromoteDueRespectsLimit(t *testing.T) {
 
 	past := time.Now().Add(-time.Minute)
 	for range 5 {
-		if err := s.Schedule(ctx, uuid.New(), past); err != nil {
+		if err := s.Schedule(ctx, Item{Tenant: uuid.New(), ID: uuid.New()}, past); err != nil {
 			t.Fatalf("Schedule: %v", err)
 		}
 	}
@@ -165,7 +168,7 @@ func TestCancel(t *testing.T) {
 	s := NewScheduler(client)
 	clearScheduler(t, s)
 
-	id := uuid.New()
+	id := Item{Tenant: uuid.New(), ID: uuid.New()}
 	if err := s.Schedule(ctx, id, time.Now().Add(time.Hour)); err != nil {
 		t.Fatalf("Schedule: %v", err)
 	}

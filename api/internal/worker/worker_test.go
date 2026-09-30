@@ -124,7 +124,7 @@ func (f *fakeStore) DeadLetter(_ context.Context, id uuid.UUID) (store.Notificat
 
 // ReapStuck returns a scripted batch of stranded ids, once, and records the
 // cutoff it was asked for.
-func (f *fakeStore) ReapStuck(_ context.Context, stuckBefore time.Time, limit int) ([]uuid.UUID, error) {
+func (f *fakeStore) ReapStuck(_ context.Context, stuckBefore time.Time, limit int) ([]store.Ref, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.reapCalls++
@@ -133,11 +133,14 @@ func (f *fakeStore) ReapStuck(_ context.Context, stuckBefore time.Time, limit in
 	if f.reapErr != nil {
 		return nil, f.reapErr
 	}
-	ids := f.reapIDs
+	refs := make([]store.Ref, 0, len(f.reapIDs))
+	for _, id := range f.reapIDs {
+		refs = append(refs, store.Ref{ID: id, ClientID: f.byID[id].ClientID})
+	}
 	// Serve the batch once, mirroring the real store, where the UPDATE marks
 	// the rows so a second sweep does not return them again.
 	f.reapIDs = nil
-	return ids, nil
+	return refs, nil
 }
 
 func (f *fakeStore) reapState() (calls int, stuckBefore time.Time, limit int) {
@@ -150,16 +153,18 @@ func (f *fakeStore) reapState() (calls int, stuckBefore time.Time, limit int) {
 type fakeEnqueuer struct {
 	mu       sync.Mutex
 	enqueued []uuid.UUID
+	items    []queue.Item
 	err      error
 }
 
-func (e *fakeEnqueuer) Enqueue(_ context.Context, id uuid.UUID) error {
+func (e *fakeEnqueuer) Enqueue(_ context.Context, it queue.Item) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.err != nil {
 		return e.err
 	}
-	e.enqueued = append(e.enqueued, id)
+	e.enqueued = append(e.enqueued, it.ID)
+	e.items = append(e.items, it)
 	return nil
 }
 
@@ -172,18 +177,20 @@ func (e *fakeEnqueuer) ids() []uuid.UUID {
 // fakeScheduler records what was deferred and to when.
 type fakeScheduler struct {
 	scheduled map[uuid.UUID]time.Time
+	tenants   map[uuid.UUID]uuid.UUID
 	err       error
 }
 
 func newFakeScheduler() *fakeScheduler {
-	return &fakeScheduler{scheduled: map[uuid.UUID]time.Time{}}
+	return &fakeScheduler{scheduled: map[uuid.UUID]time.Time{}, tenants: map[uuid.UUID]uuid.UUID{}}
 }
 
-func (f *fakeScheduler) Schedule(_ context.Context, id uuid.UUID, at time.Time) error {
+func (f *fakeScheduler) Schedule(_ context.Context, it queue.Item, at time.Time) error {
 	if f.err != nil {
 		return f.err
 	}
-	f.scheduled[id] = at
+	f.scheduled[it.ID] = at
+	f.tenants[it.ID] = it.Tenant
 	return nil
 }
 
@@ -204,21 +211,21 @@ type fakeClaimer struct {
 	stop       context.CancelFunc
 }
 
-func (f *fakeClaimer) Claim(_ context.Context, _ time.Duration) (uuid.UUID, error) {
+func (f *fakeClaimer) Claim(_ context.Context, _ time.Duration) (queue.Item, error) {
 	if len(f.ids) == 0 {
 		f.stop()
-		return uuid.Nil, queue.ErrNoWork
+		return queue.Item{}, queue.ErrNoWork
 	}
 	id := f.ids[0]
 	f.ids = f.ids[1:]
-	return id, nil
+	return queue.Item{ID: id}, nil
 }
 
-func (f *fakeClaimer) Ack(_ context.Context, id uuid.UUID) error {
+func (f *fakeClaimer) Ack(_ context.Context, it queue.Item) error {
 	if f.ackErr != nil {
 		return f.ackErr
 	}
-	f.acked = append(f.acked, id)
+	f.acked = append(f.acked, it.ID)
 	return nil
 }
 
@@ -503,6 +510,11 @@ func TestFailureSchedulesRetry(t *testing.T) {
 	if !ok {
 		t.Fatal("retry was not scheduled")
 	}
+	// Retries are promoted onto the owning tenant's queue, so the tenant must
+	// travel with the scheduled entry.
+	if tenant := sch.tenants[row.ID]; tenant != row.ClientID {
+		t.Errorf("retry scheduled under tenant %s, want %s", tenant, row.ClientID)
+	}
 	if !at.After(time.Now()) {
 		t.Errorf("retry scheduled at %v, want a time in the future", at)
 	}
@@ -722,7 +734,7 @@ type countingScheduler struct {
 	onPromote func()
 }
 
-func (s *countingScheduler) Schedule(context.Context, uuid.UUID, time.Time) error { return nil }
+func (s *countingScheduler) Schedule(context.Context, queue.Item, time.Time) error { return nil }
 
 func (s *countingScheduler) PromoteDue(context.Context, time.Time, int64) (int, error) {
 	s.onPromote()
@@ -1168,4 +1180,26 @@ func equalStatuses(got, want []store.Status) bool {
 		}
 	}
 	return true
+}
+
+// TestReapOnceRequeuesUnderOwningTenant: with per-tenant queues, a row the
+// reaper recovers must go back on its own tenant's queue, not a shared one.
+func TestReapOnceRequeuesUnderOwningTenant(t *testing.T) {
+	row := notification(uuid.New(), store.StatusDelivering, store.ChannelEmail)
+	st := newFakeStore(row)
+	st.reapIDs = []uuid.UUID{row.ID}
+	enq := &fakeEnqueuer{}
+
+	w := New(st, &fakeClaimer{}, newFakeScheduler(), &fakeReclaimer{}, enq,
+		provider.Registry{}, discardLogger(), Config{})
+	if err := w.reapOnce(context.Background()); err != nil {
+		t.Fatalf("reapOnce: %v", err)
+	}
+
+	if len(enq.items) != 1 {
+		t.Fatalf("enqueued %d items, want 1", len(enq.items))
+	}
+	if got := enq.items[0]; got.ID != row.ID || got.Tenant != row.ClientID {
+		t.Errorf("enqueued %+v, want id %s under tenant %s", got, row.ID, row.ClientID)
+	}
 }

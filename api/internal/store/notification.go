@@ -304,7 +304,7 @@ RETURNING` + selectColumns
 // to commit changes updated_at, so the second no longer matches the predicate.
 // FOR UPDATE SKIP LOCKED means the loser moves on to other rows instead of
 // blocking behind the winner.
-func (s *Store) ReapStuck(ctx context.Context, stuckBefore time.Time, limit int) ([]uuid.UUID, error) {
+func (s *Store) ReapStuck(ctx context.Context, stuckBefore time.Time, limit int) ([]Ref, error) {
 	const q = `
 UPDATE notifications
 SET status = $3, updated_at = now()
@@ -318,7 +318,7 @@ WHERE id IN (
 	LIMIT $4
 	FOR UPDATE SKIP LOCKED
 )
-RETURNING id`
+RETURNING id, client_id`
 
 	reapable := []Status{StatusPending, StatusQueued, StatusDelivering, StatusFailed}
 
@@ -328,18 +328,25 @@ RETURNING id`
 	}
 	defer rows.Close()
 
-	ids := make([]uuid.UUID, 0)
+	refs := make([]Ref, 0)
 	for rows.Next() {
-		var id uuid.UUID
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("scanning reaped notification id: %w", err)
+		var r Ref
+		if err := rows.Scan(&r.ID, &r.ClientID); err != nil {
+			return nil, fmt.Errorf("scanning reaped notification: %w", err)
 		}
-		ids = append(ids, id)
+		refs = append(refs, r)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterating reaped notifications: %w", err)
 	}
-	return ids, nil
+	return refs, nil
+}
+
+// Ref identifies a notification and the client (tenant) that owns it — what
+// the per-tenant queue needs to put it back on the right list.
+type Ref struct {
+	ID       uuid.UUID
+	ClientID uuid.UUID
 }
 
 // getByIdempotency loads the row for a (client_id, idempotency_key) pair. It is

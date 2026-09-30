@@ -30,20 +30,20 @@ type Store interface {
 	UpdateStatus(ctx context.Context, id uuid.UUID, status store.Status) error
 	RecordFailure(ctx context.Context, id uuid.UUID, nextAttemptAt time.Time) (store.Notification, error)
 	RecordAttempt(ctx context.Context, a store.Attempt) (store.Attempt, error)
-	ReapStuck(ctx context.Context, stuckBefore time.Time, limit int) ([]uuid.UUID, error)
+	ReapStuck(ctx context.Context, stuckBefore time.Time, limit int) ([]store.Ref, error)
 	DeadLetter(ctx context.Context, id uuid.UUID) (store.Notification, error)
 }
 
-// Enqueuer puts a notification back on the ready queue. The reaper needs it to
-// return recovered rows to Redis.
+// Enqueuer puts a notification back on its tenant's ready queue. The reaper
+// needs it to return recovered rows to Redis.
 type Enqueuer interface {
-	Enqueue(ctx context.Context, id uuid.UUID) error
+	Enqueue(ctx context.Context, it queue.Item) error
 }
 
 // Scheduler defers a notification until it is due, and moves due notifications
 // onto the ready queue.
 type Scheduler interface {
-	Schedule(ctx context.Context, id uuid.UUID, at time.Time) error
+	Schedule(ctx context.Context, it queue.Item, at time.Time) error
 	PromoteDue(ctx context.Context, now time.Time, limit int64) (int, error)
 }
 
@@ -51,8 +51,8 @@ type Scheduler interface {
 // crash, an explicit acknowledgement that releases it, and a way to recover
 // claims this worker left behind in a previous life.
 type Claimer interface {
-	Claim(ctx context.Context, timeout time.Duration) (uuid.UUID, error)
-	Ack(ctx context.Context, id uuid.UUID) error
+	Claim(ctx context.Context, timeout time.Duration) (queue.Item, error)
+	Ack(ctx context.Context, it queue.Item) error
 	Drain(ctx context.Context) (int, error)
 }
 
@@ -293,13 +293,13 @@ func (w *Worker) Run(ctx context.Context) error {
 			return nil
 		}
 
-		id, err := w.claimer.Claim(ctx, w.claimTimeout)
+		it, err := w.claimer.Claim(ctx, w.claimTimeout)
 		switch {
 		case err == nil:
 			// Deliver on a context detached from shutdown, so a signal
 			// arriving mid-delivery cannot abort a send that is already in
 			// flight or, worse, prevent its outcome from being recorded.
-			w.process(context.WithoutCancel(ctx), id)
+			w.process(context.WithoutCancel(ctx), it)
 		case errors.Is(err, queue.ErrNoWork):
 		// Idle tick: nothing arrived within the timeout. Loop and re-claim.
 		case ctx.Err() != nil:
@@ -315,7 +315,8 @@ func (w *Worker) Run(ctx context.Context) error {
 // process delivers one claimed notification and records the result. It never
 // returns an error: every failure mode is either recorded on the row or logged,
 // because a single bad notification must not stop the loop.
-func (w *Worker) process(ctx context.Context, id uuid.UUID) {
+func (w *Worker) process(ctx context.Context, it queue.Item) {
+	id := it.ID
 	logger := w.logger.With("notification_id", id)
 
 	n, err := w.store.GetByID(ctx, id)
@@ -323,7 +324,7 @@ func (w *Worker) process(ctx context.Context, id uuid.UUID) {
 		// The queue referenced a row that does not exist. Nothing can ever
 		// deliver it, so ack it rather than let it be re-claimed forever.
 		logger.Warn("claimed notification not found, discarding")
-		w.ack(ctx, logger, id)
+		w.ack(ctx, logger, it)
 		return
 	}
 	if err != nil {
@@ -339,7 +340,7 @@ func (w *Worker) process(ctx context.Context, id uuid.UUID) {
 	// duplicate claim into a duplicate message, so stop here.
 	if isTerminal(n.Status) {
 		logger.Info("notification already in terminal state, skipping", "status", n.Status)
-		w.ack(ctx, logger, id)
+		w.ack(ctx, logger, it)
 		return
 	}
 
@@ -349,7 +350,7 @@ func (w *Worker) process(ctx context.Context, id uuid.UUID) {
 		// Mark the row failed so it is visible, and ack so it stops circulating.
 		logger.Error("no provider for channel", "channel", n.Channel, "error", err)
 		w.setStatus(ctx, logger, id, store.StatusFailed)
-		w.ack(ctx, logger, id)
+		w.ack(ctx, logger, it)
 		return
 	}
 
@@ -388,7 +389,7 @@ func (w *Worker) process(ctx context.Context, id uuid.UUID) {
 			logger.Error("dead-lettering failed", "error", err)
 			return
 		}
-		w.ack(ctx, logger, id)
+		w.ack(ctx, logger, it)
 		return
 	}
 
@@ -398,7 +399,7 @@ func (w *Worker) process(ctx context.Context, id uuid.UUID) {
 			// Not durable, so do not ack: the id stays claimed for reclaim.
 			return
 		}
-		w.ack(ctx, logger, id)
+		w.ack(ctx, logger, it)
 		return
 	}
 
@@ -410,7 +411,7 @@ func (w *Worker) process(ctx context.Context, id uuid.UUID) {
 
 	// Ack last, and only now: the outcome is durable in Postgres, so releasing
 	// the claim can no longer lose work.
-	w.ack(ctx, logger, id)
+	w.ack(ctx, logger, it)
 }
 
 // recordAttempt appends this delivery attempt to the notification's history.
@@ -471,7 +472,7 @@ func (w *Worker) recordFailure(ctx context.Context, logger *slog.Logger, n store
 
 	// Retries live on the schedule, not the ready queue, so the backoff is
 	// actually honored instead of the notification being re-claimed instantly.
-	if err := w.scheduler.Schedule(ctx, n.ID, nextAttemptAt); err != nil {
+	if err := w.scheduler.Schedule(ctx, queue.Item{Tenant: n.ClientID, ID: n.ID}, nextAttemptAt); err != nil {
 		// Postgres already holds the next due time in scheduled_at, so the
 		// retry is recoverable — but nothing will promote it until a reaper
 		// exists, so this is loud.
@@ -598,11 +599,11 @@ func (w *Worker) runReaper(ctx context.Context) {
 func (w *Worker) reapOnce(ctx context.Context) error {
 	stuckBefore := w.now().Add(-w.stuckAfter)
 
-	ids, err := w.store.ReapStuck(ctx, stuckBefore, w.reapLimit)
+	refs, err := w.store.ReapStuck(ctx, stuckBefore, w.reapLimit)
 	if err != nil {
 		return err
 	}
-	if len(ids) == 0 {
+	if len(refs) == 0 {
 		return nil
 	}
 
@@ -610,16 +611,16 @@ func (w *Worker) reapOnce(ctx context.Context) error {
 	// deliverable again; if it fails, the row simply goes stale once more and
 	// the next sweep picks it up, so this is self-healing rather than a leak.
 	enqueued := 0
-	for _, id := range ids {
-		if err := w.enqueuer.Enqueue(ctx, id); err != nil {
-			w.logger.Error("re-enqueueing reaped notification failed", "notification_id", id, "error", err)
+	for _, r := range refs {
+		if err := w.enqueuer.Enqueue(ctx, queue.Item{Tenant: r.ClientID, ID: r.ID}); err != nil {
+			w.logger.Error("re-enqueueing reaped notification failed", "notification_id", r.ID, "error", err)
 			continue
 		}
 		enqueued++
 	}
 
 	w.logger.Warn("recovered stranded notifications from postgres",
-		"reaped", len(ids),
+		"reaped", len(refs),
 		"enqueued", enqueued,
 		"stuck_before", stuckBefore,
 	)
@@ -638,8 +639,8 @@ func (w *Worker) setStatus(ctx context.Context, logger *slog.Logger, id uuid.UUI
 // ack releases a claim, logging failures. A failed ack is not fatal: the id
 // stays on the processing list and the terminal-state check makes the eventual
 // re-claim a no-op.
-func (w *Worker) ack(ctx context.Context, logger *slog.Logger, id uuid.UUID) {
-	if err := w.claimer.Ack(ctx, id); err != nil {
+func (w *Worker) ack(ctx context.Context, logger *slog.Logger, it queue.Item) {
+	if err := w.claimer.Ack(ctx, it); err != nil {
 		logger.Error("acking notification failed", "error", err)
 	}
 }
