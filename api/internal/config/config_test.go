@@ -143,6 +143,20 @@ func TestLoad(t *testing.T) {
 			env:     mergeEnv(requiredEnv(), map[string]string{"RATE_LIMIT_BURST": "0"}),
 			wantErr: true,
 		},
+		{
+			name: "rate limit instances parsed",
+			env:  mergeEnv(requiredEnv(), map[string]string{"RATE_LIMIT_INSTANCES": "3"}),
+			check: func(t *testing.T, cfg Config) {
+				if cfg.RateLimit.Instances != 3 {
+					t.Errorf("RateLimit.Instances = %d, want 3", cfg.RateLimit.Instances)
+				}
+			},
+		},
+		{
+			name:    "zero instances fails",
+			env:     mergeEnv(requiredEnv(), map[string]string{"RATE_LIMIT_INSTANCES": "0"}),
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -242,7 +256,7 @@ func allKnownKeys() []string {
 		"POSTGRES_HOST", "POSTGRES_PORT", "POSTGRES_USER", "POSTGRES_PASSWORD",
 		"POSTGRES_DBNAME", "POSTGRES_SSLMODE", "POSTGRES_MAX_CONNS",
 		"REDIS_ADDR", "REDIS_PASSWORD", "REDIS_DB",
-		"RATE_LIMIT_RATE", "RATE_LIMIT_BURST",
+		"RATE_LIMIT_RATE", "RATE_LIMIT_BURST", "RATE_LIMIT_INSTANCES",
 	}
 }
 

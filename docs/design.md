@@ -147,10 +147,13 @@ the intended rate, exactly at the boundary an attacker would aim for. Weighting
 the previous bucket smooths that away, and still costs two counters per client
 rather than the per-request timestamp log a true sliding window needs.
 
-The limiter **fails open**. Rate limiting protects against load, but
-authentication is the security boundary — a Redis outage shouldn't take the API
-down with it. The trade is that breaking Redis also escapes rate limiting, so
-the failure is logged loudly.
+The limiter **degrades, it does not fail closed**. Rate limiting protects
+against load, but authentication is the security boundary — a Redis outage
+shouldn't take the API down with it. So when Redis errors, each instance falls
+back to an in-memory token bucket holding `RATE/INSTANCES` and
+`BURST/INSTANCES` (`RATE_LIMIT_INSTANCES`). Together the instances approximate
+the global limit; it is exact only if the load balancer spreads a tenant evenly.
+The switch to and from the fallback is logged once each way.
 
 ## Operational constraints
 

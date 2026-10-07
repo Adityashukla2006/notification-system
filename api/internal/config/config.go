@@ -151,6 +151,13 @@ type RateLimitConfig struct {
 	// after being idle. It is what bounds a burst, which a per-minute window
 	// could not do.
 	Burst int `env:"BURST" envDefault:"20"`
+
+	// Instances is how many API instances share the budget. When Redis is
+	// unreachable, each instance falls back to an in-memory bucket holding
+	// Rate/Instances and Burst/Instances, so together they approximate the
+	// global limit. Too low lets an outage multiply the limit; too high makes
+	// the fallback stricter than intended.
+	Instances int `env:"INSTANCES" envDefault:"1"`
 }
 
 // validate rejects settings the limiter cannot work with.
@@ -160,6 +167,9 @@ func (r RateLimitConfig) validate() error {
 	}
 	if r.Burst < 1 {
 		return fmt.Errorf("RATE_LIMIT_BURST must be at least 1, got %d", r.Burst)
+	}
+	if r.Instances < 1 {
+		return fmt.Errorf("RATE_LIMIT_INSTANCES must be at least 1, got %d", r.Instances)
 	}
 	return nil
 }
